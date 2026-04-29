@@ -1,0 +1,87 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Car {
+  id                       Int           @id @default(autoincrement())
+  brand                    String
+  model                    String
+  registrationNumber       String        @unique
+  year                     Int?
+  fuelType                 String
+  transmission             String
+  dailyPrice               Float
+  status                   String        @default("AVAILABLE")
+  mileage                  Int?
+  insuranceExpiryDate      DateTime?
+  technicalVisitExpiryDate DateTime?
+  createdAt                DateTime      @default(now())
+  updatedAt                DateTime      @updatedAt
+  reservations             Reservation[]
+}
+
+model Client {
+  id             Int           @id @default(autoincrement())
+  fullName       String
+  phone          String
+  email          String?
+  cin            String?
+  passportNumber String?
+  drivingLicense String?
+  address        String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  reservations   Reservation[]
+}
+
+model Reservation {
+  id              Int       @id @default(autoincrement())
+  clientId        Int
+  carId           Int
+  startDate       DateTime
+  endDate         DateTime
+  dailyPrice      Float
+  totalPrice      Float
+  depositAmount   Float     @default(0)
+  status          String    @default("RESERVED")
+  pickupMileage   Int?
+  returnMileage   Int?
+  pickupFuelLevel String?
+  returnFuelLevel String?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  client          Client    @relation(fields: [clientId], references: [id])
+  car             Car       @relation(fields: [carId], references: [id])
+  payments        Payment[]
+  contract        Contract?
+}
+
+model Payment {
+  id            Int         @id @default(autoincrement())
+  reservationId Int
+  amount        Float
+  type          String
+  method        String
+  paymentDate   DateTime    @default(now())
+  note          String?
+  createdAt     DateTime    @default(now())
+  reservation   Reservation @relation(fields: [reservationId], references: [id])
+}
+
+model Contract {
+  id             Int         @id @default(autoincrement())
+  reservationId  Int         @unique
+  contractNumber String      @unique
+  pdfPath        String?
+  status         String      @default("GENERATED")
+  generatedAt    DateTime    @default(now())
+  signedAt       DateTime?
+  createdAt      DateTime    @default(now())
+  reservation    Reservation @relation(fields: [reservationId], references: [id])
+}

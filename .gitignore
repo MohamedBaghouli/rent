@@ -1,0 +1,13 @@
+node_modules/
+dist/
+
+# Tauri / Rust build output
+src-tauri/target/
+
+# Local environment and logs
+.env
+*.log
+
+# Local database files
+prisma/*.db
+prisma/*.db-journal
