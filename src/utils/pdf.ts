@@ -1,7 +1,17 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import type { Car } from "@/types/car";
+import type { Client } from "@/types/client";
 import type { Contract } from "@/types/contract";
+import type { Reservation } from "@/types/reservation";
+import { formatCarName, formatRegistrationNumber } from "@/utils/car";
+import { formatDrivingLicense, formatPhoneNumber, normalizeClientName } from "@/utils/client";
+import { formatPeriod } from "@/utils/date";
+import { formatMoney } from "@/utils/money";
 
-export async function createContractPdf(contract: Contract) {
+export async function createContractPdf(
+  contract: Contract,
+  details: { car?: Car; client?: Client; reservation?: Reservation; secondClient?: Client } = {},
+) {
   const pdfDoc = await PDFDocument.create();
   const page = pdfDoc.addPage([595, 842]);
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -18,13 +28,24 @@ export async function createContractPdf(contract: Contract) {
   const lines = [
     "Agence: RentalDesk",
     `Reservation: #${contract.reservationId}`,
-    "Client: voir fiche reservation",
-    "Voiture: voir fiche reservation",
-    "Dates: date depart et date retour selon reservation",
-    "Prix total: selon reservation",
-    "Caution: separee du paiement location",
-    "Kilometrage depart: selon fiche depart",
-    "Carburant depart: selon fiche depart",
+    `Client: ${details.client ? normalizeClientName(details.client.fullName) : "-"}`,
+    `Telephone: ${formatPhoneNumber(details.client?.phone)}`,
+    `${formatClientIdentity(details.client)}`,
+    `Permis: ${formatDrivingLicense(details.client?.drivingLicense)}`,
+    ...(details.secondClient
+      ? [
+          `Deuxieme conducteur: ${normalizeClientName(details.secondClient.fullName)}`,
+          `${formatClientIdentity(details.secondClient)}`,
+          `Permis 2e conducteur: ${formatDrivingLicense(details.secondClient.drivingLicense)}`,
+        ]
+      : []),
+    `Voiture: ${details.car ? formatCarName(details.car.brand, details.car.model) : "-"}`,
+    `Immatriculation: ${details.car ? formatRegistrationNumber(details.car.registrationNumber) : "-"}`,
+    `Dates: ${formatPeriod(details.reservation?.startDate, details.reservation?.endDate)}`,
+    `Prix total: ${formatMoney(details.reservation?.totalPrice ?? 0)}`,
+    `Caution: ${formatMoney(details.reservation?.depositAmount ?? 0)}`,
+    `Kilometrage depart: ${details.reservation?.pickupMileage ?? details.car?.mileage ?? "-"}`,
+    `Carburant depart: ${details.reservation?.pickupFuelLevel ?? "-"}`,
     "",
     "Conditions generales:",
     "- Le client restitue le vehicule dans l'etat initial.",
@@ -45,4 +66,11 @@ export async function createContractPdf(contract: Contract) {
   });
 
   return pdfDoc.save();
+}
+
+function formatClientIdentity(client?: Client) {
+  if (!client) return "Piece: -";
+  if (client.cin) return `CIN: ${client.cin}`;
+  if (client.passportNumber) return `Passeport: ${client.passportNumber}`;
+  return "Piece: -";
 }

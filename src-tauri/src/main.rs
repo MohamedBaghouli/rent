@@ -7,6 +7,14 @@ use std::{
 };
 
 const INIT_SQL: &str = include_str!("../../prisma/migrations/20260427213400_init/migration.sql");
+const MIGRATION_CLIENT_EXTRA: &str = include_str!("../../prisma/migrations/20260430000000_client_extra_fields/migration.sql");
+const MIGRATION_CAR_IMAGE_URL: &str = include_str!("../../prisma/migrations/20260501000000_car_image_url/migration.sql");
+const MIGRATION_CLIENT_BIRTHPLACE_NATIONALITY_UNIQUE: &str =
+    include_str!("../../prisma/migrations/20260501010000_client_birthplace_nationality_unique/migration.sql");
+const MIGRATION_RESERVATION_SECOND_CLIENT: &str =
+    include_str!("../../prisma/migrations/20260501020000_reservation_second_client/migration.sql");
+const MIGRATION_CLIENT_IS_ACTIVE: &str =
+    include_str!("../../prisma/migrations/20260502000000_client_is_active/migration.sql");
 
 struct AppState {
     db: Mutex<Connection>,
@@ -25,6 +33,7 @@ struct Car {
     daily_price: f64,
     status: String,
     mileage: Option<i32>,
+    image_url: Option<String>,
     insurance_expiry_date: Option<String>,
     technical_visit_expiry_date: Option<String>,
     created_at: String,
@@ -43,6 +52,7 @@ struct CreateCarDto {
     daily_price: f64,
     status: String,
     mileage: Option<i32>,
+    image_url: Option<String>,
     insurance_expiry_date: Option<String>,
     technical_visit_expiry_date: Option<String>,
 }
@@ -53,11 +63,17 @@ struct Client {
     id: i32,
     full_name: String,
     phone: String,
-    email: Option<String>,
     cin: Option<String>,
     passport_number: Option<String>,
     driving_license: Option<String>,
+    driving_license_date: Option<String>,
+    cin_issue_date: Option<String>,
+    cin_issue_place: Option<String>,
+    birth_date: Option<String>,
+    birth_place: Option<String>,
+    nationality: Option<String>,
     address: Option<String>,
+    is_active: bool,
     created_at: String,
     updated_at: String,
 }
@@ -67,11 +83,17 @@ struct Client {
 struct CreateClientDto {
     full_name: String,
     phone: String,
-    email: Option<String>,
     cin: Option<String>,
     passport_number: Option<String>,
     driving_license: Option<String>,
+    driving_license_date: Option<String>,
+    cin_issue_date: Option<String>,
+    cin_issue_place: Option<String>,
+    birth_date: Option<String>,
+    birth_place: Option<String>,
+    nationality: Option<String>,
     address: Option<String>,
+    is_active: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -79,6 +101,7 @@ struct CreateClientDto {
 struct Reservation {
     id: i32,
     client_id: i32,
+    second_client_id: Option<i32>,
     car_id: i32,
     start_date: String,
     end_date: String,
@@ -138,6 +161,7 @@ struct Contract {
 #[serde(rename_all = "camelCase")]
 struct CreateReservationDto {
     client_id: i32,
+    second_client_id: Option<i32>,
     car_id: i32,
     start_date: String,
     end_date: String,
@@ -213,13 +237,75 @@ fn init_db() -> Result<Connection, String> {
             .map_err(|error| error.to_string())?;
     }
 
+    // Apply client extra fields migration if columns don't exist yet
+    let has_birth_date: bool = connection
+        .prepare("PRAGMA table_info(Client)")
+        .and_then(|mut stmt| {
+            let cols: Result<Vec<String>, _> = stmt.query_map([], |row| row.get::<_, String>(1)).map(|iter| iter.flatten().collect());
+            cols
+        })
+        .map(|cols| cols.iter().any(|c| c == "birthDate"))
+        .unwrap_or(false);
+
+    if !has_birth_date {
+        connection
+            .execute_batch(MIGRATION_CLIENT_EXTRA)
+            .map_err(|error| error.to_string())?;
+    }
+
+    let has_car_image_url: bool = connection
+        .prepare("PRAGMA table_info(Car)")
+        .and_then(|mut stmt| {
+            let cols: Result<Vec<String>, _> = stmt.query_map([], |row| row.get::<_, String>(1)).map(|iter| iter.flatten().collect());
+            cols
+        })
+        .map(|cols| cols.iter().any(|c| c == "imageUrl"))
+        .unwrap_or(false);
+
+    if !has_car_image_url {
+        connection
+            .execute_batch(MIGRATION_CAR_IMAGE_URL)
+            .map_err(|error| error.to_string())?;
+    }
+
+    if !has_column(&connection, "Client", "birthPlace") {
+        connection
+            .execute_batch(MIGRATION_CLIENT_BIRTHPLACE_NATIONALITY_UNIQUE)
+            .map_err(|error| error.to_string())?;
+    }
+
+    if !has_column(&connection, "Reservation", "secondClientId") {
+        connection
+            .execute_batch(MIGRATION_RESERVATION_SECOND_CLIENT)
+            .map_err(|error| error.to_string())?;
+    }
+
+    if !has_column(&connection, "Client", "isActive") {
+        connection
+            .execute_batch(MIGRATION_CLIENT_IS_ACTIVE)
+            .map_err(|error| error.to_string())?;
+    }
+
     Ok(connection)
+}
+
+fn has_column(connection: &Connection, table: &str, column: &str) -> bool {
+    let sql = format!("PRAGMA table_info({})", table);
+    connection
+        .prepare(&sql)
+        .and_then(|mut stmt| {
+            let cols: Result<Vec<String>, _> =
+                stmt.query_map([], |row| row.get::<_, String>(1)).map(|iter| iter.flatten().collect());
+            cols
+        })
+        .map(|cols| cols.iter().any(|c| c == column))
+        .unwrap_or(false)
 }
 
 fn get_car_by_id(connection: &Connection, id: i64) -> Result<Car, String> {
     connection
         .query_row(
-            "SELECT id, brand, model, registrationNumber, year, fuelType, transmission, dailyPrice, status, mileage, insuranceExpiryDate, technicalVisitExpiryDate, createdAt, updatedAt FROM Car WHERE id = ?1",
+            "SELECT id, brand, model, registrationNumber, year, fuelType, transmission, dailyPrice, status, mileage, imageUrl, insuranceExpiryDate, technicalVisitExpiryDate, createdAt, updatedAt FROM Car WHERE id = ?1",
             params![id],
             map_car,
         )
@@ -229,7 +315,7 @@ fn get_car_by_id(connection: &Connection, id: i64) -> Result<Car, String> {
 fn get_client_by_id(connection: &Connection, id: i64) -> Result<Client, String> {
     connection
         .query_row(
-            "SELECT id, fullName, phone, email, cin, passportNumber, drivingLicense, address, createdAt, updatedAt FROM Client WHERE id = ?1",
+            "SELECT id, fullName, phone, cin, passportNumber, drivingLicense, drivingLicenseDate, cinIssueDate, cinIssuePlace, birthDate, birthPlace, nationality, address, isActive, createdAt, updatedAt FROM Client WHERE id = ?1",
             params![id],
             map_client,
         )
@@ -239,7 +325,7 @@ fn get_client_by_id(connection: &Connection, id: i64) -> Result<Client, String> 
 fn get_reservation_by_id(connection: &Connection, id: i64) -> Result<Reservation, String> {
     connection
         .query_row(
-            "SELECT id, clientId, carId, startDate, endDate, dailyPrice, totalPrice, depositAmount, status, pickupMileage, returnMileage, pickupFuelLevel, returnFuelLevel, notes, createdAt, updatedAt FROM Reservation WHERE id = ?1",
+            "SELECT id, clientId, secondClientId, carId, startDate, endDate, dailyPrice, totalPrice, depositAmount, status, pickupMileage, returnMileage, pickupFuelLevel, returnFuelLevel, notes, createdAt, updatedAt FROM Reservation WHERE id = ?1",
             params![id],
             map_reservation,
         )
@@ -278,10 +364,11 @@ fn map_car(row: &rusqlite::Row<'_>) -> rusqlite::Result<Car> {
         daily_price: row.get(7)?,
         status: row.get(8)?,
         mileage: row.get(9)?,
-        insurance_expiry_date: row.get(10)?,
-        technical_visit_expiry_date: row.get(11)?,
-        created_at: row.get(12)?,
-        updated_at: row.get(13)?,
+        image_url: row.get(10)?,
+        insurance_expiry_date: row.get(11)?,
+        technical_visit_expiry_date: row.get(12)?,
+        created_at: row.get(13)?,
+        updated_at: row.get(14)?,
     })
 }
 
@@ -290,13 +377,19 @@ fn map_client(row: &rusqlite::Row<'_>) -> rusqlite::Result<Client> {
         id: row.get(0)?,
         full_name: row.get(1)?,
         phone: row.get(2)?,
-        email: row.get(3)?,
-        cin: row.get(4)?,
-        passport_number: row.get(5)?,
-        driving_license: row.get(6)?,
-        address: row.get(7)?,
-        created_at: row.get(8)?,
-        updated_at: row.get(9)?,
+        cin: row.get(3)?,
+        passport_number: row.get(4)?,
+        driving_license: row.get(5)?,
+        driving_license_date: row.get(6)?,
+        cin_issue_date: row.get(7)?,
+        cin_issue_place: row.get(8)?,
+        birth_date: row.get(9)?,
+        birth_place: row.get(10)?,
+        nationality: row.get(11)?,
+        address: row.get(12)?,
+        is_active: row.get(13)?,
+        created_at: row.get(14)?,
+        updated_at: row.get(15)?,
     })
 }
 
@@ -304,20 +397,21 @@ fn map_reservation(row: &rusqlite::Row<'_>) -> rusqlite::Result<Reservation> {
     Ok(Reservation {
         id: row.get(0)?,
         client_id: row.get(1)?,
-        car_id: row.get(2)?,
-        start_date: row.get(3)?,
-        end_date: row.get(4)?,
-        daily_price: row.get(5)?,
-        total_price: row.get(6)?,
-        deposit_amount: row.get(7)?,
-        status: row.get(8)?,
-        pickup_mileage: row.get(9)?,
-        return_mileage: row.get(10)?,
-        pickup_fuel_level: row.get(11)?,
-        return_fuel_level: row.get(12)?,
-        notes: row.get(13)?,
-        created_at: row.get(14)?,
-        updated_at: row.get(15)?,
+        second_client_id: row.get(2)?,
+        car_id: row.get(3)?,
+        start_date: row.get(4)?,
+        end_date: row.get(5)?,
+        daily_price: row.get(6)?,
+        total_price: row.get(7)?,
+        deposit_amount: row.get(8)?,
+        status: row.get(9)?,
+        pickup_mileage: row.get(10)?,
+        return_mileage: row.get(11)?,
+        pickup_fuel_level: row.get(12)?,
+        return_fuel_level: row.get(13)?,
+        notes: row.get(14)?,
+        created_at: row.get(15)?,
+        updated_at: row.get(16)?,
     })
 }
 
@@ -384,7 +478,7 @@ fn generate_contract_for_reservation(
 fn get_cars(state: tauri::State<'_, AppState>) -> Result<Vec<Car>, String> {
     let connection = state.db.lock().map_err(|error| error.to_string())?;
     let mut statement = connection
-        .prepare("SELECT id, brand, model, registrationNumber, year, fuelType, transmission, dailyPrice, status, mileage, insuranceExpiryDate, technicalVisitExpiryDate, createdAt, updatedAt FROM Car ORDER BY createdAt DESC")
+        .prepare("SELECT id, brand, model, registrationNumber, year, fuelType, transmission, dailyPrice, status, mileage, imageUrl, insuranceExpiryDate, technicalVisitExpiryDate, createdAt, updatedAt FROM Car ORDER BY createdAt DESC")
         .map_err(|error| error.to_string())?;
     let rows = statement
         .query_map([], map_car)
@@ -399,8 +493,8 @@ fn create_car(state: tauri::State<'_, AppState>, data: CreateCarDto) -> Result<C
     let connection = state.db.lock().map_err(|error| error.to_string())?;
     connection
         .execute(
-            "INSERT INTO Car (brand, model, registrationNumber, year, fuelType, transmission, dailyPrice, status, mileage, insuranceExpiryDate, technicalVisitExpiryDate, createdAt, updatedAt)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, strftime('%Y-%m-%dT%H:%M:%fZ','now'), strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+            "INSERT INTO Car (brand, model, registrationNumber, year, fuelType, transmission, dailyPrice, status, mileage, imageUrl, insuranceExpiryDate, technicalVisitExpiryDate, createdAt, updatedAt)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, strftime('%Y-%m-%dT%H:%M:%fZ','now'), strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
             params![
                 data.brand,
                 data.model,
@@ -411,6 +505,7 @@ fn create_car(state: tauri::State<'_, AppState>, data: CreateCarDto) -> Result<C
                 data.daily_price,
                 data.status,
                 data.mileage,
+                data.image_url,
                 data.insurance_expiry_date,
                 data.technical_visit_expiry_date
             ],
@@ -432,9 +527,9 @@ fn update_car(
             "UPDATE Car
              SET brand = ?1, model = ?2, registrationNumber = ?3, year = ?4, fuelType = ?5,
                  transmission = ?6, dailyPrice = ?7, status = ?8, mileage = ?9,
-                 insuranceExpiryDate = ?10, technicalVisitExpiryDate = ?11,
+                 imageUrl = ?10, insuranceExpiryDate = ?11, technicalVisitExpiryDate = ?12,
                  updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-             WHERE id = ?12",
+             WHERE id = ?13",
             params![
                 data.brand,
                 data.model,
@@ -445,6 +540,7 @@ fn update_car(
                 data.daily_price,
                 data.status,
                 data.mileage,
+                data.image_url,
                 data.insurance_expiry_date,
                 data.technical_visit_expiry_date,
                 id
@@ -486,7 +582,7 @@ fn delete_car(state: tauri::State<'_, AppState>, id: i32) -> Result<(), String> 
 fn get_clients(state: tauri::State<'_, AppState>) -> Result<Vec<Client>, String> {
     let connection = state.db.lock().map_err(|error| error.to_string())?;
     let mut statement = connection
-        .prepare("SELECT id, fullName, phone, email, cin, passportNumber, drivingLicense, address, createdAt, updatedAt FROM Client ORDER BY createdAt DESC")
+        .prepare("SELECT id, fullName, phone, cin, passportNumber, drivingLicense, drivingLicenseDate, cinIssueDate, cinIssuePlace, birthDate, birthPlace, nationality, address, isActive, createdAt, updatedAt FROM Client ORDER BY createdAt DESC")
         .map_err(|error| error.to_string())?;
     let rows = statement
         .query_map([], map_client)
@@ -504,19 +600,25 @@ fn create_client(
     let connection = state.db.lock().map_err(|error| error.to_string())?;
     connection
         .execute(
-            "INSERT INTO Client (fullName, phone, email, cin, passportNumber, drivingLicense, address, createdAt, updatedAt)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, strftime('%Y-%m-%dT%H:%M:%fZ','now'), strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+            "INSERT INTO Client (fullName, phone, cin, passportNumber, drivingLicense, drivingLicenseDate, cinIssueDate, cinIssuePlace, birthDate, birthPlace, nationality, address, isActive, createdAt, updatedAt)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, COALESCE(?13, true), strftime('%Y-%m-%dT%H:%M:%fZ','now'), strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
             params![
                 data.full_name,
                 data.phone,
-                data.email,
                 data.cin,
                 data.passport_number,
                 data.driving_license,
-                data.address
+                data.driving_license_date,
+                data.cin_issue_date,
+                data.cin_issue_place,
+                data.birth_date,
+                data.birth_place,
+                data.nationality,
+                data.address,
+                data.is_active
             ],
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(map_client_db_error)?;
 
     get_client_by_id(&connection, connection.last_insert_rowid())
 }
@@ -531,21 +633,28 @@ fn update_client(
     connection
         .execute(
             "UPDATE Client
-             SET fullName = ?1, phone = ?2, email = ?3, cin = ?4, passportNumber = ?5,
-                 drivingLicense = ?6, address = ?7, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-             WHERE id = ?8",
+             SET fullName = ?1, phone = ?2, cin = ?3, passportNumber = ?4,
+                 drivingLicense = ?5, drivingLicenseDate = ?6, cinIssueDate = ?7,
+                 cinIssuePlace = ?8, birthDate = ?9, birthPlace = ?10, nationality = ?11, address = ?12,
+                 updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+             WHERE id = ?13",
             params![
                 data.full_name,
                 data.phone,
-                data.email,
                 data.cin,
                 data.passport_number,
                 data.driving_license,
+                data.driving_license_date,
+                data.cin_issue_date,
+                data.cin_issue_place,
+                data.birth_date,
+                data.birth_place,
+                data.nationality,
                 data.address,
                 id
             ],
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(map_client_db_error)?;
 
     get_client_by_id(&connection, id.into())
 }
@@ -564,7 +673,7 @@ fn delete_client(state: tauri::State<'_, AppState>, id: i32) -> Result<(), Strin
 fn get_reservations(state: tauri::State<'_, AppState>) -> Result<Vec<Reservation>, String> {
     let connection = state.db.lock().map_err(|error| error.to_string())?;
     let mut statement = connection
-        .prepare("SELECT id, clientId, carId, startDate, endDate, dailyPrice, totalPrice, depositAmount, status, pickupMileage, returnMileage, pickupFuelLevel, returnFuelLevel, notes, createdAt, updatedAt FROM Reservation ORDER BY createdAt DESC")
+        .prepare("SELECT id, clientId, secondClientId, carId, startDate, endDate, dailyPrice, totalPrice, depositAmount, status, pickupMileage, returnMileage, pickupFuelLevel, returnFuelLevel, notes, createdAt, updatedAt FROM Reservation ORDER BY createdAt DESC")
         .map_err(|error| error.to_string())?;
     let rows = statement
         .query_map([], map_reservation)
@@ -589,60 +698,27 @@ fn create_reservation(
         )
         .map_err(|_| "Voiture introuvable".to_string())?;
 
-    if data.client_id <= 0 {
-        return Err("Client obligatoire.".to_string());
-    }
-
-    if data.car_id <= 0 {
-        return Err("Voiture obligatoire.".to_string());
-    }
-
-    if data.start_date.trim().is_empty() {
-        return Err("Date et heure de prise obligatoires.".to_string());
-    }
-
-    if data.end_date.trim().is_empty() {
-        return Err("Date et heure de retour obligatoires.".to_string());
-    }
-
-    if data.end_date.as_str() <= data.start_date.as_str() {
-        return Err("La date et heure de retour doivent etre apres la prise.".to_string());
-    }
-
-    if data.daily_price <= 0.0 {
-        return Err("Le prix/jour doit etre superieur a 0.".to_string());
-    }
-
-    if data.deposit_amount < 0.0 {
-        return Err("La caution doit etre superieure ou egale a 0.".to_string());
+    validate_reservation_data(&data)?;
+    ensure_client_active(&connection, data.client_id, "Client")?;
+    if let Some(second_client_id) = data.second_client_id {
+        ensure_client_active(&connection, second_client_id, "Deuxième conducteur")?;
     }
 
     if car_status == "MAINTENANCE" || car_status == "UNAVAILABLE" {
         return Err("Cette voiture n'est pas disponible.".to_string());
     }
 
-    let overlapping_count: i64 = connection
-        .query_row(
-            "SELECT COUNT(*) FROM Reservation
-             WHERE carId = ?1
-               AND status IN ('RESERVED', 'ONGOING')
-               AND (CASE WHEN length(startDate) = 10 THEN startDate || 'T00:00:00.000Z' ELSE startDate END) < ?3
-               AND (CASE WHEN length(endDate) = 10 THEN endDate || 'T23:59:59.999Z' ELSE endDate END) > ?2",
-            params![data.car_id, data.start_date, data.end_date],
-            |row| row.get(0),
-        )
-        .map_err(|error| error.to_string())?;
-
-    if overlapping_count > 0 {
+    if has_reservation_conflict(&connection, data.car_id, &data.start_date, &data.end_date, None)? {
         return Err("Cette voiture est déjà réservée sur cette période.".to_string());
     }
 
     connection
         .execute(
-            "INSERT INTO Reservation (clientId, carId, startDate, endDate, dailyPrice, totalPrice, depositAmount, status, pickupMileage, returnMileage, pickupFuelLevel, returnFuelLevel, notes, createdAt, updatedAt)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, strftime('%Y-%m-%dT%H:%M:%fZ','now'), strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+            "INSERT INTO Reservation (clientId, secondClientId, carId, startDate, endDate, dailyPrice, totalPrice, depositAmount, status, pickupMileage, returnMileage, pickupFuelLevel, returnFuelLevel, notes, createdAt, updatedAt)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, strftime('%Y-%m-%dT%H:%M:%fZ','now'), strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
             params![
                 data.client_id,
+                data.second_client_id,
                 data.car_id,
                 data.start_date,
                 data.end_date,
@@ -661,9 +737,99 @@ fn create_reservation(
 
     let reservation_id = connection.last_insert_rowid();
     let reservation = get_reservation_by_id(&connection, reservation_id)?;
-    generate_contract_for_reservation(&connection, reservation.id)?;
 
     Ok(reservation)
+}
+
+#[tauri::command]
+fn deactivate_client(state: tauri::State<'_, AppState>, id: i32) -> Result<Client, String> {
+    let connection = state.db.lock().map_err(|error| error.to_string())?;
+    connection
+        .execute(
+            "UPDATE Client SET isActive = false, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?1",
+            params![id],
+        )
+        .map_err(|error| error.to_string())?;
+
+    get_client_by_id(&connection, id.into())
+}
+
+#[tauri::command]
+fn reactivate_client(state: tauri::State<'_, AppState>, id: i32) -> Result<Client, String> {
+    let connection = state.db.lock().map_err(|error| error.to_string())?;
+    connection
+        .execute(
+            "UPDATE Client SET isActive = true, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?1",
+            params![id],
+        )
+        .map_err(|error| error.to_string())?;
+
+    get_client_by_id(&connection, id.into())
+}
+
+#[tauri::command]
+fn update_reservation(
+    state: tauri::State<'_, AppState>,
+    id: i32,
+    data: CreateReservationDto,
+) -> Result<Reservation, String> {
+    let connection = state.db.lock().map_err(|error| error.to_string())?;
+    let current_status: String = connection
+        .query_row("SELECT status FROM Reservation WHERE id = ?1", params![id], |row| row.get(0))
+        .map_err(|_| "Réservation introuvable".to_string())?;
+
+    if current_status != "EN_ATTENTE" {
+        return Err("Seules les réservations en attente peuvent être modifiées.".to_string());
+    }
+
+    let car_status: String = connection
+        .query_row("SELECT status FROM Car WHERE id = ?1", params![data.car_id], |row| row.get(0))
+        .map_err(|_| "Voiture introuvable".to_string())?;
+
+    validate_reservation_data(&data)?;
+    ensure_client_active(&connection, data.client_id, "Client")?;
+    if let Some(second_client_id) = data.second_client_id {
+        ensure_client_active(&connection, second_client_id, "Deuxième conducteur")?;
+    }
+
+    if car_status == "MAINTENANCE" || car_status == "UNAVAILABLE" {
+        return Err("Cette voiture n'est pas disponible.".to_string());
+    }
+
+    if has_reservation_conflict(&connection, data.car_id, &data.start_date, &data.end_date, Some(id))? {
+        return Err("Cette voiture est déjà réservée sur cette période.".to_string());
+    }
+
+    connection
+        .execute(
+            "UPDATE Reservation
+             SET clientId = ?1, secondClientId = ?2, carId = ?3, startDate = ?4, endDate = ?5,
+                 dailyPrice = ?6, totalPrice = ?7, depositAmount = ?8, status = ?9,
+                 pickupMileage = ?10, returnMileage = ?11, pickupFuelLevel = ?12,
+                 returnFuelLevel = ?13, notes = ?14,
+                 updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+             WHERE id = ?15",
+            params![
+                data.client_id,
+                data.second_client_id,
+                data.car_id,
+                data.start_date,
+                data.end_date,
+                data.daily_price,
+                data.total_price,
+                data.deposit_amount,
+                data.status,
+                data.pickup_mileage,
+                data.return_mileage,
+                data.pickup_fuel_level,
+                data.return_fuel_level,
+                data.notes,
+                id
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+
+    get_reservation_by_id(&connection, id.into())
 }
 
 #[tauri::command]
@@ -712,6 +878,39 @@ fn update_reservation_status(
     }
 
     get_reservation_by_id(&connection, id.into())
+}
+
+#[tauri::command]
+fn delete_reservation(state: tauri::State<'_, AppState>, id: i32) -> Result<(), String> {
+    let connection = state.db.lock().map_err(|error| error.to_string())?;
+    let (car_id, status): (i32, String) = connection
+        .query_row(
+            "SELECT carId, status FROM Reservation WHERE id = ?1",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|_| "Réservation introuvable.".to_string())?;
+
+    connection
+        .execute("DELETE FROM Contract WHERE reservationId = ?1", params![id])
+        .map_err(|error| error.to_string())?;
+    connection
+        .execute("DELETE FROM Payment WHERE reservationId = ?1", params![id])
+        .map_err(|error| error.to_string())?;
+    connection
+        .execute("DELETE FROM Reservation WHERE id = ?1", params![id])
+        .map_err(|error| error.to_string())?;
+
+    if status == "ONGOING" {
+        connection
+            .execute(
+                "UPDATE Car SET status = 'AVAILABLE', updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?1",
+                params![car_id],
+            )
+            .map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -830,6 +1029,126 @@ fn count(connection: &Connection, sql: &str) -> Result<i32, String> {
         .map_err(|error| error.to_string())
 }
 
+fn validate_reservation_data(data: &CreateReservationDto) -> Result<(), String> {
+    if data.client_id <= 0 {
+        return Err("Client obligatoire.".to_string());
+    }
+
+    if data.second_client_id == Some(data.client_id) {
+        return Err("Le deuxième conducteur doit être différent du client principal.".to_string());
+    }
+
+    if data.car_id <= 0 {
+        return Err("Voiture obligatoire.".to_string());
+    }
+
+    if data.start_date.trim().is_empty() {
+        return Err("Date et heure de prise obligatoires.".to_string());
+    }
+
+    if data.end_date.trim().is_empty() {
+        return Err("Date et heure de retour obligatoires.".to_string());
+    }
+
+    let start_minutes = parse_iso_minutes(&data.start_date).ok_or("Date de début invalide.".to_string())?;
+    let end_minutes = parse_iso_minutes(&data.end_date).ok_or("Date de fin invalide.".to_string())?;
+
+    if end_minutes - start_minutes < 24 * 60 {
+        return Err("La durée minimale de location est de 24h.".to_string());
+    }
+
+    if data.daily_price <= 0.0 {
+        return Err("Le prix/jour doit être supérieur à 0.".to_string());
+    }
+
+    if data.deposit_amount < 0.0 {
+        return Err("La caution doit être supérieure ou égale à 0.".to_string());
+    }
+
+    Ok(())
+}
+
+fn ensure_client_active(connection: &Connection, client_id: i32, label: &str) -> Result<(), String> {
+    let is_active: bool = connection
+        .query_row(
+            "SELECT isActive FROM Client WHERE id = ?1",
+            params![client_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| format!("{} introuvable.", label))?;
+
+    if !is_active {
+        return Err(format!("{} désactivé.", label));
+    }
+
+    Ok(())
+}
+
+fn has_reservation_conflict(
+    connection: &Connection,
+    car_id: i32,
+    start_date: &str,
+    end_date: &str,
+    excluded_id: Option<i32>,
+) -> Result<bool, String> {
+    let overlapping_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM Reservation
+             WHERE carId = ?1
+               AND (?4 IS NULL OR id != ?4)
+               AND status IN ('EN_ATTENTE', 'RESERVED', 'ONGOING')
+               AND (CASE WHEN length(startDate) = 10 THEN startDate || 'T00:00:00.000Z' ELSE startDate END) < ?3
+               AND (CASE WHEN length(endDate) = 10 THEN endDate || 'T23:59:59.999Z' ELSE endDate END) > ?2",
+            params![car_id, start_date, end_date, excluded_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+
+    Ok(overlapping_count > 0)
+}
+
+fn parse_iso_minutes(value: &str) -> Option<i64> {
+    let value = value.trim();
+    let date_part = value.get(0..10)?;
+    let time_part = if value.len() >= 16 { value.get(11..16).unwrap_or("00:00") } else { "00:00" };
+    let mut date = date_part.split('-');
+    let year: i32 = date.next()?.parse().ok()?;
+    let month: u32 = date.next()?.parse().ok()?;
+    let day: u32 = date.next()?.parse().ok()?;
+    let mut time = time_part.split(':');
+    let hour: i64 = time.next()?.parse().ok()?;
+    let minute: i64 = time.next()?.parse().ok()?;
+    Some(days_from_civil(year, month, day) * 24 * 60 + hour * 60 + minute)
+}
+
+fn days_from_civil(year: i32, month: u32, day: u32) -> i64 {
+    let year = year - if month <= 2 { 1 } else { 0 };
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let yoe = year - era * 400;
+    let month = month as i32;
+    let day = day as i32;
+    let doy = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    (era * 146097 + doe - 719468) as i64
+}
+
+fn map_client_db_error(error: rusqlite::Error) -> String {
+    let message = error.to_string();
+    if message.contains("Client.phone") {
+        return "Ce téléphone existe déjà.".to_string();
+    }
+    if message.contains("Client.cin") {
+        return "Cette CIN existe déjà.".to_string();
+    }
+    if message.contains("Client.passportNumber") {
+        return "Ce passeport existe déjà.".to_string();
+    }
+    if message.contains("Client.drivingLicense") {
+        return "Ce numéro de permis existe déjà.".to_string();
+    }
+    message
+}
+
 fn main() {
     let db = init_db().expect("failed to initialize local SQLite database");
 
@@ -846,9 +1165,13 @@ fn main() {
             create_client,
             update_client,
             delete_client,
+            deactivate_client,
+            reactivate_client,
             get_reservations,
             create_reservation,
+            update_reservation,
             update_reservation_status,
+            delete_reservation,
             get_payments,
             create_payment,
             get_contracts,

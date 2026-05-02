@@ -1,11 +1,12 @@
 import type { Car } from "@/types/car";
 import type { Client } from "@/types/client";
 
-export type ReservationStatus = "RESERVED" | "ONGOING" | "COMPLETED" | "CANCELLED";
+export type ReservationStatus = "EN_ATTENTE" | "RESERVED" | "ONGOING" | "COMPLETED" | "CANCELLED";
 
 export interface Reservation {
   id: number;
   clientId: number;
+  secondClientId?: number | null;
   carId: number;
   startDate: string;
   endDate: string;
@@ -21,7 +22,8 @@ export interface Reservation {
   createdAt: string;
   updatedAt: string;
   client?: Client;
+  secondClient?: Client | null;
   car?: Car;
 }
 
-export type CreateReservationDto = Omit<Reservation, "id" | "createdAt" | "updatedAt" | "client" | "car">;
+export type CreateReservationDto = Omit<Reservation, "id" | "createdAt" | "updatedAt" | "client" | "secondClient" | "car">;

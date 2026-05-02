@@ -7,10 +7,13 @@ import { Label } from "@/components/ui/label";
 import type { Car, CreateCarDto } from "@/types/car";
 import {
   formatCarName,
+  formatRegistrationNumber,
   isValidRegistrationNumber,
+  joinRegistrationNumber,
   normalizeCarBrand,
   normalizeCarModel,
   normalizeRegistrationNumber,
+  splitRegistrationNumber,
 } from "@/utils/car";
 import { formatMoney } from "@/utils/money";
 
@@ -21,39 +24,48 @@ interface CarFormProps {
   onSubmit: (data: CreateCarDto) => void | Promise<void>;
 }
 
+type CarFormValues = Omit<CreateCarDto, "registrationNumber"> & {
+  registrationLeft: string;
+  registrationRight: string;
+};
+
 const selectClassName = "h-10 w-full rounded-md border border-input bg-white px-3 text-sm";
 const fuelTypes = ["Essence", "Diesel", "Hybride", "Électrique"];
 const transmissions = ["Manuelle", "Automatique"];
 
 export function CarForm({ currentCarId, defaultValues, existingCars = [], onSubmit }: CarFormProps) {
+  const initialRegistration = splitRegistrationNumber(defaultValues?.registrationNumber);
   const {
     register,
     handleSubmit,
     watch,
     setValue,
     formState: { errors },
-  } = useForm<CreateCarDto>({
+  } = useForm<CarFormValues>({
     defaultValues: {
       brand: "",
       model: "",
-      registrationNumber: "",
+      registrationLeft: initialRegistration.left,
+      registrationRight: initialRegistration.right,
       fuelType: "Essence",
       transmission: "Manuelle",
       dailyPrice: undefined,
       status: "AVAILABLE",
       year: undefined,
       mileage: undefined,
+      imageUrl: "",
       insuranceExpiryDate: "",
       technicalVisitExpiryDate: "",
-      ...defaultValues,
+      ...withoutRegistrationDefault(defaultValues),
     },
   });
 
   const brand = normalizeCarBrand(watch("brand"));
   const model = normalizeCarModel(watch("model"));
-  const registrationNumber = watch("registrationNumber")?.trim() ?? "";
+  const registrationNumber = joinRegistrationNumber(watch("registrationLeft"), watch("registrationRight"));
   const dailyPrice = Number(watch("dailyPrice"));
   const status = watch("status") ?? "AVAILABLE";
+  const imageUrl = watch("imageUrl");
   const insuranceExpiryDate = watch("insuranceExpiryDate");
   const technicalVisitExpiryDate = watch("technicalVisitExpiryDate");
 
@@ -70,30 +82,42 @@ export function CarForm({ currentCarId, defaultValues, existingCars = [], onSubm
   const insuranceWarning = getInsuranceWarning(insuranceExpiryDate);
   const technicalVisitWarning = getTechnicalVisitWarning(technicalVisitExpiryDate);
 
-  function submitForm(data: CreateCarDto) {
+  function submitForm(data: CarFormValues) {
     return onSubmit({
       ...data,
       brand: normalizeCarBrand(data.brand),
       model: normalizeCarModel(data.model),
-      registrationNumber: normalizeRegistrationNumber(data.registrationNumber),
+      registrationNumber: joinRegistrationNumber(data.registrationLeft, data.registrationRight),
       fuelType: data.fuelType,
       transmission: data.transmission,
       dailyPrice: Number(data.dailyPrice),
       status: data.status ?? "AVAILABLE",
       year: Number.isFinite(data.year) ? data.year : null,
       mileage: Number.isFinite(data.mileage) ? data.mileage : null,
+      imageUrl: data.imageUrl || null,
       insuranceExpiryDate: data.insuranceExpiryDate || null,
       technicalVisitExpiryDate: data.technicalVisitExpiryDate || null,
     });
   }
 
-  function handleRegistrationChange(value: string) {
-    setValue("registrationNumber", normalizeRegistrationNumber(value), { shouldDirty: true, shouldValidate: true });
+  function handleRegistrationPart(field: "registrationLeft" | "registrationRight", value: string) {
+    setValue(field, value.replace(/\D/g, "").slice(0, field === "registrationLeft" ? 3 : 4), {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
+  }
+
+  async function handleImageUpload(file?: File) {
+    if (!file) return;
+
+    const dataUrl = await readFileAsDataUrl(file);
+    setValue("imageUrl", dataUrl, { shouldDirty: true, shouldValidate: true });
   }
 
   return (
     <form className="grid gap-4 md:grid-cols-2" onSubmit={handleSubmit(submitForm)}>
       <input type="hidden" {...register("status")} />
+      <input type="hidden" {...register("imageUrl")} />
 
       <div>
         <Label>Marque *</Label>
@@ -119,22 +143,32 @@ export function CarForm({ currentCarId, defaultValues, existingCars = [], onSubm
 
       <div>
         <Label>Immatriculation *</Label>
-        <Input
-          placeholder="Ex: 123TU456"
-          {...register("registrationNumber", {
-            onChange: (event) => handleRegistrationChange(event.target.value),
-            validate: (value) => {
-              const normalized = normalizeRegistrationNumber(value);
-
-              if (!normalized) return "L'immatriculation est obligatoire.";
-              if (!isValidRegistrationNumber(normalized)) return "Format attendu : 123TU456.";
-              if (existingRegistrations.has(normalized)) return "Cette immatriculation existe déjà.";
-
-              return true;
-            },
-          })}
-        />
-        {errors.registrationNumber && <p className="mt-1 text-xs text-destructive">{errors.registrationNumber.message}</p>}
+        <div className="grid grid-cols-[minmax(0,1fr)_96px_minmax(0,1fr)] items-center gap-2">
+          <Input
+            inputMode="numeric"
+            maxLength={3}
+            placeholder="123"
+            {...register("registrationLeft", {
+              onChange: (event) => handleRegistrationPart("registrationLeft", event.target.value),
+              validate: (_value, values) => validateRegistration(values.registrationLeft, values.registrationRight, existingRegistrations),
+            })}
+          />
+          <Input readOnly className="text-center font-medium" value="Tunisie" />
+          <Input
+            inputMode="numeric"
+            maxLength={4}
+            placeholder="456"
+            {...register("registrationRight", {
+              onChange: (event) => handleRegistrationPart("registrationRight", event.target.value),
+              validate: (_value, values) => validateRegistration(values.registrationLeft, values.registrationRight, existingRegistrations),
+            })}
+          />
+        </div>
+        {(errors.registrationLeft || errors.registrationRight) && (
+          <p className="mt-1 text-xs text-destructive">
+            {errors.registrationLeft?.message || errors.registrationRight?.message}
+          </p>
+        )}
       </div>
 
       <div>
@@ -200,6 +234,22 @@ export function CarForm({ currentCarId, defaultValues, existingCars = [], onSubm
         {errors.mileage && <p className="mt-1 text-xs text-destructive">{errors.mileage.message}</p>}
       </div>
 
+      <div className="md:col-span-2">
+        <Label>Image de la voiture</Label>
+        <div className="mt-2 flex flex-col gap-3 rounded-md border border-border bg-white p-3 sm:flex-row sm:items-center">
+          <CarImagePreview imageUrl={imageUrl} />
+          <div className="flex-1 space-y-2">
+            <Input accept="image/*" onChange={(event) => void handleImageUpload(event.target.files?.[0])} type="file" />
+            <p className="text-xs text-muted-foreground">Champ optionnel. Si aucune image n'est ajoutée, une emoji voiture sera affichée.</p>
+            {imageUrl && (
+              <Button onClick={() => setValue("imageUrl", "", { shouldDirty: true, shouldValidate: true })} size="sm" type="button" variant="outline">
+                Retirer l'image
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+
       {currentCarId && (
         <div className="md:col-span-2">
           <Label>Statut</Label>
@@ -224,7 +274,7 @@ export function CarForm({ currentCarId, defaultValues, existingCars = [], onSubm
         <h3 className="mb-3 font-semibold">Résumé</h3>
         <div className="space-y-1">
           <p className="font-medium">{formatCarName(brand || "Marque", model || "Modèle")}</p>
-          <p>{registrationNumber || "Immatriculation"}</p>
+          <p>{registrationNumber ? formatRegistrationNumber(registrationNumber) : "Immatriculation"}</p>
           <p>{Number.isFinite(dailyPrice) ? `${formatMoney(dailyPrice)} / jour` : "Prix par jour"}</p>
           <p>{getStatusLabel(status)}</p>
         </div>
@@ -236,6 +286,43 @@ export function CarForm({ currentCarId, defaultValues, existingCars = [], onSubm
       </div>
     </form>
   );
+}
+
+function CarImagePreview({ imageUrl }: { imageUrl?: string | null }) {
+  if (imageUrl) {
+    return <img alt="Voiture" className="h-24 w-32 rounded-md border border-border object-cover" src={imageUrl} />;
+  }
+
+  return (
+    <div className="flex h-24 w-32 items-center justify-center rounded-md border border-dashed border-border bg-muted text-4xl">
+      🚗
+    </div>
+  );
+}
+
+function validateRegistration(left: string, right: string, existingRegistrations: Set<string>) {
+  const normalized = joinRegistrationNumber(left, right);
+
+  if (!normalized) return "L'immatriculation est obligatoire.";
+  if (!isValidRegistrationNumber(normalized)) return "Format attendu : 123 Tunisie 456.";
+  if (existingRegistrations.has(normalized)) return "Cette immatriculation existe déjà.";
+
+  return true;
+}
+
+function withoutRegistrationDefault(defaultValues?: Partial<CreateCarDto>): Partial<CarFormValues> {
+  if (!defaultValues) return {};
+  const { registrationNumber: _registrationNumber, ...rest } = defaultValues;
+  return rest;
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(String(reader.result ?? "")));
+    reader.addEventListener("error", () => reject(reader.error));
+    reader.readAsDataURL(file);
+  });
 }
 
 function getInsuranceWarning(value?: string | null) {

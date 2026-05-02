@@ -1,0 +1,45 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Start Web App",
+      "type": "shell",
+      "command": "npm run dev",
+      "group": "build",
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": {
+          "regexp": "^$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": "Local:.*http://localhost:1420/.*"
+        }
+      }
+    },
+    {
+      "label": "Start Desktop App",
+      "type": "shell",
+      "command": "npm run tauri:dev",
+      "group": "build",
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Build Web App",
+      "type": "shell",
+      "command": "npm run build",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Build Desktop App",
+      "type": "shell",
+      "command": "npm run tauri:build",
+      "group": "build",
+      "problemMatcher": []
+    }
+  ]
+}

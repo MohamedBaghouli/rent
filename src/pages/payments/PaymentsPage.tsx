@@ -15,14 +15,16 @@ import type { Car } from "@/types/car";
 import type { Client } from "@/types/client";
 import type { CreatePaymentDto, Payment } from "@/types/payment";
 import type { Reservation } from "@/types/reservation";
-import { formatCarName, normalizeRegistrationNumber } from "@/utils/car";
+import { formatCarName, formatRegistrationNumber } from "@/utils/car";
 import { normalizeClientName } from "@/utils/client";
-import { formatDate, formatShortPeriod } from "@/utils/date";
+import { formatDateTime, formatShortPeriod } from "@/utils/date";
 import { formatMoney } from "@/utils/money";
+import { useToast } from "@/hooks/useToast";
 
 type ReservationSummary = {
   car?: Car;
   client?: Client;
+  secondClient?: Client;
   paid: number;
   remaining: number;
   reservation: Reservation;
@@ -57,6 +59,7 @@ export function PaymentsPage() {
   const [cars, setCars] = useState<Car[]>([]);
   const [reservationFilter, setReservationFilter] = useState<number>(0);
   const [open, setOpen] = useState(false);
+  const { showToast } = useToast();
 
   useEffect(() => {
     void reload();
@@ -93,6 +96,7 @@ export function PaymentsPage() {
         return {
           car: carsById.get(reservation.carId),
           client: clientsById.get(reservation.clientId),
+          secondClient: reservation.secondClientId ? clientsById.get(reservation.secondClientId) : undefined,
           paid,
           remaining,
           reservation,
@@ -135,7 +139,7 @@ export function PaymentsPage() {
         </span>
       ),
     },
-    { header: "Date", cell: ({ row }) => formatDate(row.original.paymentDate) },
+    { header: "Date", cell: ({ row }) => formatDateTime(row.original.paymentDate) },
     {
       header: "Reçu",
       cell: ({ row }) => (
@@ -147,21 +151,31 @@ export function PaymentsPage() {
   ];
 
   async function handleCreate(data: CreatePaymentDto) {
-    const payment = await createPayment(data);
-    setPayments((current) => [payment, ...current]);
-    setOpen(false);
+    try {
+      const payment = await createPayment(data);
+      setPayments((current) => [payment, ...current]);
+      setOpen(false);
+      showToast({ title: "Paiement ajouté", type: "success" });
+    } catch (caught) {
+      showToast({ message: getErrorMessage(caught), title: "Erreur paiement", type: "error" });
+    }
   }
 
   function showReceipt(payment: Payment) {
     const reservation = reservationsById.get(payment.reservationId);
     const client = reservation ? clientsById.get(reservation.clientId) : undefined;
+    const secondClient = reservation?.secondClientId ? clientsById.get(reservation.secondClientId) : undefined;
     const car = reservation ? carsById.get(reservation.carId) : undefined;
 
-    window.alert(
-      `Reçu paiement #${payment.id}\nClient: ${client ? normalizeClientName(client.fullName) : "-"}\nVoiture: ${
+    showToast({
+      message: `Client: ${client ? normalizeClientName(client.fullName) : "-"}${
+        secondClient ? ` | 2e conducteur: ${normalizeClientName(secondClient.fullName)}` : ""
+      } | Voiture: ${
         car ? formatCarName(car.brand, car.model) : "-"
-      }\nMontant: ${formatMoney(payment.amount)}\nMéthode: ${paymentMethodLabels[payment.method]}`,
-    );
+      } | ${formatMoney(payment.amount)} | ${paymentMethodLabels[payment.method]}`,
+      title: `Reçu paiement #${payment.id}`,
+      type: "info",
+    });
   }
 
   return (
@@ -215,6 +229,9 @@ function PaymentSummaryCard({ summary }: { summary: ReservationSummary }) {
       <div className="flex items-start justify-between gap-3">
         <div>
           <CardTitle>{summary.client ? normalizeClientName(summary.client.fullName) : "Client inconnu"}</CardTitle>
+          {summary.secondClient && (
+            <p className="mt-1 text-xs text-muted-foreground">2e conducteur : {normalizeClientName(summary.secondClient.fullName)}</p>
+          )}
           <p className="mt-1 text-sm text-muted-foreground">{formatSummaryCar(summary.car)}</p>
         </div>
         <PaymentStatus label={summary.status} />
@@ -267,7 +284,7 @@ function PaymentCarCell({ car }: { car?: Car }) {
   return (
     <div>
       <p className="font-medium">{formatCarName(car.brand, car.model)}</p>
-      <p className="text-xs text-muted-foreground">({normalizeRegistrationNumber(car.registrationNumber)})</p>
+      <p className="text-xs text-muted-foreground">({formatRegistrationNumber(car.registrationNumber)})</p>
     </div>
   );
 }
@@ -289,14 +306,15 @@ function getPaymentCar(payment: Payment, reservationsById: Map<number, Reservati
 }
 
 function getReservationLabel(summary: ReservationSummary) {
-  return `${summary.client ? normalizeClientName(summary.client.fullName) : "Client inconnu"} - ${formatSummaryCar(
+  const secondClient = summary.secondClient ? ` / 2e conducteur: ${normalizeClientName(summary.secondClient.fullName)}` : "";
+  return `${summary.client ? normalizeClientName(summary.client.fullName) : "Client inconnu"}${secondClient} - ${formatSummaryCar(
     summary.car,
   )} - ${formatShortPeriod(summary.reservation.startDate, summary.reservation.endDate)}`;
 }
 
 function formatSummaryCar(car?: Car) {
   if (!car) return "Voiture inconnue";
-  return `${formatCarName(car.brand, car.model)} (${normalizeRegistrationNumber(car.registrationNumber)})`;
+  return `${formatCarName(car.brand, car.model)} (${formatRegistrationNumber(car.registrationNumber)})`;
 }
 
 function ClientCell({ client }: { client?: Client }) {
@@ -305,7 +323,11 @@ function ClientCell({ client }: { client?: Client }) {
   return (
     <div>
       <p>{normalizeClientName(client.fullName)}</p>
-      <p className="text-xs text-muted-foreground">CIN : {client.cin || "-"}</p>
+      <p className="text-xs text-muted-foreground">{client.cin ? `CIN : ${client.cin}` : client.passportNumber ? `Passeport : ${client.passportNumber}` : "Pièce : -"}</p>
     </div>
   );
+}
+
+function getErrorMessage(caught: unknown) {
+  return caught instanceof Error ? caught.message : String(caught);
 }

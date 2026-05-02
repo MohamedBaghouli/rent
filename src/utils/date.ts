@@ -108,3 +108,63 @@ export function getLocalDateKey(value: string | Date) {
 
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
+
+// Time grid utilities
+export function getStartOfWeek(date: Date): Date {
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  return new Date(d.setDate(diff));
+}
+
+export function getWeekDays(startDate: Date): Date[] {
+  const start = getStartOfWeek(startDate);
+  const days: Date[] = [];
+  for (let i = 0; i < 7; i++) {
+    const day = new Date(start);
+    day.setDate(day.getDate() + i);
+    days.push(day);
+  }
+  return days;
+}
+
+export function getHourPosition(hour: number, minute: number = 0): number {
+  return (hour * 60 + minute) / 60;
+}
+
+export function getReservationTimePosition(
+  reservationStart: string,
+  dayDate: Date,
+): { topPercent: number; heightPercent: number; startTime: string; endTime: string; isOutOfRange: boolean } {
+  const resStart = new Date(reservationStart);
+  const startHour = resStart.getHours();
+  const startMinute = resStart.getMinutes();
+
+  // Calculate position relative to 8:00-20:00 window (12 hours)
+  const topHour = getHourPosition(startHour, startMinute);
+  const topPercent = ((topHour - 8) / 12) * 100; // 8:00 to 20:00 = 12 hours
+
+  // Fixed height for all blocks (1/12 of the 12-hour window)
+  const heightPercent = (1 / 12) * 100;
+
+  // Check if reservation is within visible hours (08:00 - 20:00)
+  const isOutOfRange = startHour < 8 || startHour >= 20;
+
+  const startTime = `${String(startHour).padStart(2, "0")}:${String(startMinute).padStart(2, "0")}`;
+
+  return {
+    topPercent: Math.max(0, Math.min(100, topPercent)),
+    heightPercent,
+    startTime,
+    endTime: startTime, // Using same as start for now, can be enhanced
+    isOutOfRange,
+  };
+}
+
+export function generateHourLabels(startHour: number = 8, endHour: number = 20): string[] {
+  const labels: string[] = [];
+  for (let i = startHour; i <= endHour; i++) {
+    labels.push(`${String(i).padStart(2, "0")}:00`);
+  }
+  return labels;
+}

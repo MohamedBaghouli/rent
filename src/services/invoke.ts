@@ -15,6 +15,7 @@ const defaultCollections: Record<CollectionCommand, unknown[]> = {
       dailyPrice: 95,
       status: "AVAILABLE",
       mileage: 42000,
+      imageUrl: null,
       insuranceExpiryDate: new Date().toISOString(),
       technicalVisitExpiryDate: new Date().toISOString(),
       createdAt: new Date().toISOString(),
@@ -29,8 +30,11 @@ const defaultCollections: Record<CollectionCommand, unknown[]> = {
       email: "sami@example.com",
       cin: "12345678",
       passportNumber: null,
-      drivingLicense: "TN-45896",
+      drivingLicense: "TN/45896",
+      birthPlace: "Tunis",
+      nationality: "Tunisienne",
       address: "Tunis",
+      isActive: true,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     },
@@ -81,9 +85,13 @@ function invokeFallback<T>(command: string, args?: Record<string, unknown>): T {
     if (command === "create_reservation") {
       validateFallbackReservation(args?.data as Record<string, unknown>);
     }
+    if (command === "create_client") {
+      validateFallbackClient(args?.data as Record<string, unknown>);
+    }
     const item = {
       id: Date.now(),
       ...(args?.data as object),
+      ...(command === "create_client" ? { isActive: true } : {}),
       createdAt: now,
       updatedAt: now,
     };
@@ -100,6 +108,9 @@ function invokeFallback<T>(command: string, args?: Record<string, unknown>): T {
     const collection = `${updateMatch[1]}s` as CollectionCommand;
     const id = Number(args?.id);
     const data = args?.data as object;
+    if (command === "update_client") {
+      validateFallbackClient(data as Record<string, unknown>, id);
+    }
     const updated = readCollection<Record<string, unknown>>(collection).map((item) =>
       item.id === id ? { ...item, ...data, updatedAt: new Date().toISOString() } : item,
     );
@@ -145,6 +156,58 @@ function invokeFallback<T>(command: string, args?: Record<string, unknown>): T {
     }
 
     return updatedReservations.find((reservation) => reservation.id === id) as T;
+  }
+
+  if (command === "deactivate_client" || command === "reactivate_client") {
+    const id = Number(args?.id);
+    const isActive = command === "reactivate_client";
+    const updated = readCollection<Record<string, unknown>>("clients").map((client) =>
+      client.id === id ? { ...client, isActive, updatedAt: new Date().toISOString() } : client,
+    );
+    writeCollection("clients", updated);
+    return updated.find((client) => client.id === id) as T;
+  }
+
+  if (command === "delete_reservation") {
+    const id = Number(args?.id);
+    const reservations = readCollection<Record<string, unknown>>("reservations");
+    const reservation = reservations.find((item) => item.id === id);
+
+    writeCollection(
+      "payments",
+      readCollection<Record<string, unknown>>("payments").filter((payment) => payment.reservationId !== id),
+    );
+    writeCollection(
+      "contracts",
+      readCollection<Record<string, unknown>>("contracts").filter((contract) => contract.reservationId !== id),
+    );
+    writeCollection(
+      "reservations",
+      reservations.filter((item) => item.id !== id),
+    );
+
+    if (reservation?.status === "ONGOING") {
+      invokeFallback("change_car_status", { id: reservation.carId, status: "AVAILABLE" });
+    }
+
+    return undefined as T;
+  }
+
+  if (command === "update_reservation") {
+    const id = Number(args?.id);
+    const data = args?.data as Record<string, unknown>;
+    const reservations = readCollection<Record<string, unknown>>("reservations");
+    const target = reservations.find((reservation) => reservation.id === id);
+    if (!target) throw new Error("Réservation introuvable.");
+    if (target.status !== "EN_ATTENTE") {
+      throw new Error("Seules les réservations en attente peuvent être modifiées.");
+    }
+    validateFallbackReservation(data, id);
+    const updated = reservations.map((reservation) =>
+      reservation.id === id ? { ...reservation, ...data, updatedAt: new Date().toISOString() } : reservation,
+    );
+    writeCollection("reservations", updated);
+    return updated.find((reservation) => reservation.id === id) as T;
   }
 
   if (command === "generate_contract") {
@@ -196,8 +259,9 @@ function createFallbackContract(reservationId: number) {
   return contract;
 }
 
-function validateFallbackReservation(data: Record<string, unknown>) {
+function validateFallbackReservation(data: Record<string, unknown>, excludedReservationId?: number) {
   const clientId = Number(data.clientId);
+  const secondClientId = data.secondClientId == null ? null : Number(data.secondClientId);
   const carId = Number(data.carId);
   const startDate = String(data.startDate ?? "");
   const endDate = String(data.endDate ?? "");
@@ -207,11 +271,14 @@ function validateFallbackReservation(data: Record<string, unknown>) {
   const endTime = new Date(endDate).getTime();
 
   if (clientId <= 0) throw new Error("Client obligatoire.");
+  if (secondClientId && secondClientId === clientId) {
+    throw new Error("Le deuxième conducteur doit être différent du client principal.");
+  }
   if (carId <= 0) throw new Error("Voiture obligatoire.");
   if (!startDate) throw new Error("Date et heure de prise obligatoires.");
   if (!endDate) throw new Error("Date et heure de retour obligatoires.");
-  if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime <= startTime) {
-    throw new Error("La date et heure de retour doivent etre apres la prise.");
+  if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime - startTime < 24 * 60 * 60 * 1000) {
+    throw new Error("La durée minimale de location est de 24h.");
   }
   if (!Number.isFinite(dailyPrice) || dailyPrice <= 0) throw new Error("Le prix/jour doit etre superieur a 0.");
   if (!Number.isFinite(depositAmount) || depositAmount < 0) throw new Error("La caution doit etre superieure ou egale a 0.");
@@ -223,8 +290,9 @@ function validateFallbackReservation(data: Record<string, unknown>) {
   }
 
   const hasConflict = readCollection<Record<string, unknown>>("reservations").some((reservation) => {
+    if (Number(reservation.id) === excludedReservationId) return false;
     if (Number(reservation.carId) !== carId) return false;
-    if (!["RESERVED", "ONGOING"].includes(String(reservation.status))) return false;
+    if (!["EN_ATTENTE", "RESERVED", "ONGOING"].includes(String(reservation.status))) return false;
 
     const existingStart = new Date(normalizeLegacyDateTime(String(reservation.startDate ?? ""), "start")).getTime();
     const existingEnd = new Date(normalizeLegacyDateTime(String(reservation.endDate ?? ""), "end")).getTime();
@@ -234,6 +302,23 @@ function validateFallbackReservation(data: Record<string, unknown>) {
 
   if (hasConflict) {
     throw new Error("Cette voiture est deja reservee sur cette periode.");
+  }
+}
+
+function validateFallbackClient(data: Record<string, unknown>, currentClientId?: number) {
+  const clients = readCollection<Record<string, unknown>>("clients");
+  const uniqueFields = [
+    ["phone", "Ce téléphone existe déjà."],
+    ["cin", "Cette CIN existe déjà."],
+    ["passportNumber", "Ce passeport existe déjà."],
+    ["drivingLicense", "Ce numéro de permis existe déjà."],
+  ] as const;
+
+  for (const [field, message] of uniqueFields) {
+    const value = String(data[field] ?? "").trim();
+    if (!value) continue;
+    const exists = clients.some((client) => Number(client.id) !== currentClientId && String(client[field] ?? "").trim() === value);
+    if (exists) throw new Error(message);
   }
 }
 

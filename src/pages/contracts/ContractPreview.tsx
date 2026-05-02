@@ -17,14 +17,16 @@ import type { Car } from "@/types/car";
 import type { Client } from "@/types/client";
 import type { Contract, ContractStatus } from "@/types/contract";
 import type { Reservation } from "@/types/reservation";
-import { formatCarName } from "@/utils/car";
+import { formatCarName, formatRegistrationNumber } from "@/utils/car";
 import { normalizeClientName } from "@/utils/client";
 import { formatDate, formatShortPeriod } from "@/utils/date";
 import { createContractPdf } from "@/utils/pdf";
+import { useToast } from "@/hooks/useToast";
 
 type ContractRow = {
   car?: Car;
   client?: Client;
+  secondClient?: Client;
   contract: Contract;
   reservation?: Reservation;
 };
@@ -40,6 +42,7 @@ export function ContractPreview() {
   const [statusFilter, setStatusFilter] = useState<"ALL" | ContractStatus>("ALL");
   const [dateFilter, setDateFilter] = useState("");
   const [clientFilter, setClientFilter] = useState<number>(0);
+  const { showToast } = useToast();
 
   useEffect(() => {
     void Promise.all([getContracts(), getReservations(), getClients(), getCars()]).then(
@@ -64,6 +67,7 @@ export function ContractPreview() {
         return {
           car: reservation ? carMap.get(reservation.carId) : undefined,
           client: reservation ? clientMap.get(reservation.clientId) : undefined,
+          secondClient: reservation?.secondClientId ? clientMap.get(reservation.secondClientId) : undefined,
           contract,
           reservation,
         };
@@ -76,7 +80,8 @@ export function ContractPreview() {
       rows.filter((row) => {
         const matchesStatus = statusFilter === "ALL" || row.contract.status === statusFilter;
         const matchesDate = !dateFilter || row.contract.generatedAt.slice(0, 10) === dateFilter;
-        const matchesClient = clientFilter === 0 || row.reservation?.clientId === clientFilter;
+        const matchesClient =
+          clientFilter === 0 || row.reservation?.clientId === clientFilter || row.reservation?.secondClientId === clientFilter;
 
         return matchesStatus && matchesDate && matchesClient;
       }),
@@ -85,7 +90,7 @@ export function ContractPreview() {
 
   const columns: ColumnDef<ContractRow>[] = [
     { header: "N° Contrat", cell: ({ row }) => row.original.contract.contractNumber },
-    { header: "Client", cell: ({ row }) => <ClientCell client={row.original.client} /> },
+    { header: "Client", cell: ({ row }) => <ClientCell client={row.original.client} secondClient={row.original.secondClient} /> },
     { header: "Voiture", cell: ({ row }) => formatCar(row.original.car) },
     { header: "Période", cell: ({ row }) => formatPeriod(row.original.reservation) },
     { header: "Statut", cell: ({ row }) => <StatusBadge status={row.original.contract.status} /> },
@@ -98,7 +103,7 @@ export function ContractPreview() {
           <Button aria-label="Voir contrat" onClick={() => setSelected(row.original.contract)} size="icon" title="Voir contrat" variant="ghost">
             <Eye className="h-4 w-4" />
           </Button>
-          <Button aria-label="Télécharger" onClick={() => downloadContract(row.original.contract)} size="icon" title="Télécharger" variant="ghost">
+          <Button aria-label="Télécharger" onClick={() => downloadContract(row.original)} size="icon" title="Télécharger" variant="ghost">
             <Download className="h-4 w-4" />
           </Button>
           <Button aria-label="Imprimer" onClick={() => window.print()} size="icon" title="Imprimer" variant="ghost">
@@ -109,20 +114,31 @@ export function ContractPreview() {
     },
   ];
 
-  async function downloadContract(contract: Contract) {
-    const bytes = await createContractPdf(contract);
-    const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-    const blob = new Blob([arrayBuffer], { type: "application/pdf" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${contract.contractNumber}.pdf`;
-    link.click();
-    URL.revokeObjectURL(url);
+  async function downloadContract(row: ContractRow) {
+    try {
+      const bytes = await createContractPdf(row.contract, {
+        car: row.car,
+        client: row.client,
+        reservation: row.reservation,
+        secondClient: row.secondClient,
+      });
+      const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+      const blob = new Blob([arrayBuffer], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${row.contract.contractNumber}.pdf`;
+      link.click();
+      URL.revokeObjectURL(url);
+      showToast({ title: "Contrat téléchargé", type: "success" });
+    } catch (caught) {
+      showToast({ message: getErrorMessage(caught), title: "Erreur contrat", type: "error" });
+    }
   }
 
   const reservation = selected ? reservationMap.get(selected.reservationId) : undefined;
   const client = reservation ? clientMap.get(reservation.clientId) : undefined;
+  const secondClient = reservation?.secondClientId ? clientMap.get(reservation.secondClientId) : undefined;
   const car = reservation ? carMap.get(reservation.carId) : undefined;
 
   return (
@@ -168,7 +184,7 @@ export function ContractPreview() {
           <DialogHeader>
             <DialogTitle>Prévisualisation contrat</DialogTitle>
           </DialogHeader>
-          {selected && <ContractPDF car={car} client={client} contract={selected} reservation={reservation} />}
+          {selected && <ContractPDF car={car} client={client} contract={selected} reservation={reservation} secondClient={secondClient} />}
         </DialogContent>
       </Dialog>
     </>
@@ -176,7 +192,7 @@ export function ContractPreview() {
 }
 
 function formatCar(car?: Car) {
-  return car ? formatCarName(car.brand, car.model) : "-";
+  return car ? `${formatCarName(car.brand, car.model)} (${formatRegistrationNumber(car.registrationNumber)})` : "-";
 }
 
 function formatPeriod(reservation?: Reservation) {
@@ -207,13 +223,20 @@ function formatSignature(contract: Contract) {
   return "En attente";
 }
 
-function ClientCell({ client }: { client?: Client }) {
+function ClientCell({ client, secondClient }: { client?: Client; secondClient?: Client }) {
   if (!client) return <span>-</span>;
 
   return (
     <div>
       <p>{normalizeClientName(client.fullName)}</p>
-      <p className="text-xs text-muted-foreground">CIN : {client.cin || "-"}</p>
+      <p className="text-xs text-muted-foreground">{client.cin ? `CIN : ${client.cin}` : client.passportNumber ? `Passeport : ${client.passportNumber}` : "Pièce : -"}</p>
+      {secondClient && (
+        <p className="text-xs text-muted-foreground">2e conducteur : {normalizeClientName(secondClient.fullName)}</p>
+      )}
     </div>
   );
+}
+
+function getErrorMessage(caught: unknown) {
+  return caught instanceof Error ? caught.message : String(caught);
 }

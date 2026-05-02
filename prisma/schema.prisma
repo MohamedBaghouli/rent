@@ -18,6 +18,7 @@ model Car {
   dailyPrice               Float
   status                   String        @default("AVAILABLE")
   mileage                  Int?
+  imageUrl                 String?
   insuranceExpiryDate      DateTime?
   technicalVisitExpiryDate DateTime?
   createdAt                DateTime      @default(now())
@@ -26,22 +27,35 @@ model Car {
 }
 
 model Client {
-  id             Int           @id @default(autoincrement())
-  fullName       String
-  phone          String
-  email          String?
-  cin            String?
-  passportNumber String?
-  drivingLicense String?
-  address        String?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-  reservations   Reservation[]
+  id                  Int           @id @default(autoincrement())
+  fullName            String
+  phone               String
+  cin                 String?
+  passportNumber      String?
+  drivingLicense      String?
+  drivingLicenseDate  String?
+  cinIssueDate        String?
+  cinIssuePlace       String?
+  birthDate           String?
+  birthPlace          String?
+  nationality         String?
+  address             String?
+  isActive            Boolean       @default(true)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+  reservations        Reservation[] @relation("PrimaryClientReservations")
+  secondDriverReservations Reservation[] @relation("SecondClientReservations")
+
+  @@unique([phone])
+  @@unique([cin])
+  @@unique([passportNumber])
+  @@unique([drivingLicense])
 }
 
 model Reservation {
   id              Int       @id @default(autoincrement())
   clientId        Int
+  secondClientId  Int?
   carId           Int
   startDate       DateTime
   endDate         DateTime
@@ -56,7 +70,8 @@ model Reservation {
   notes           String?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
-  client          Client    @relation(fields: [clientId], references: [id])
+  client          Client    @relation("PrimaryClientReservations", fields: [clientId], references: [id])
+  secondClient    Client?   @relation("SecondClientReservations", fields: [secondClientId], references: [id])
   car             Car       @relation(fields: [carId], references: [id])
   payments        Payment[]
   contract        Contract?

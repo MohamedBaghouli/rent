@@ -11,6 +11,7 @@ export interface Car {
   dailyPrice: number;
   status: CarStatus;
   mileage?: number | null;
+  imageUrl?: string | null;
   insuranceExpiryDate?: string | null;
   technicalVisitExpiryDate?: string | null;
   createdAt: string;

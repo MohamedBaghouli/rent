@@ -13,8 +13,10 @@ export function Sidebar() {
           <NavLink
             className={({ isActive }) =>
               cn(
-                "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition",
-                isActive ? "bg-primary text-primary-foreground" : "hover:bg-muted hover:text-foreground",
+                "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-smooth",
+                isActive
+                  ? "animate-fade-in bg-primary text-primary-foreground shadow-md"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground active:scale-95",
               )
             }
             end={item.path === "/"}

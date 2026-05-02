@@ -14,21 +14,23 @@ export function DialogContent({
 }: DialogPrimitive.DialogContentProps) {
   return (
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-slate-950/35" />
-      <DialogPrimitive.Content
-        className={cn(
-          "fixed left-1/2 top-1/2 z-50 w-[min(92vw,720px)] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-white p-6 shadow-xl",
-          className,
-        )}
-        {...props}
-      >
-        {children}
-        <DialogPrimitive.Close asChild>
-          <Button aria-label="Fermer" className="absolute right-3 top-3" size="icon" variant="ghost">
-            <X className="h-4 w-4" />
-          </Button>
-        </DialogPrimitive.Close>
-      </DialogPrimitive.Content>
+      <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-slate-950/45 data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out" />
+      <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
+        <DialogPrimitive.Content
+          className={cn(
+            "pointer-events-auto w-[min(92vw,720px)] rounded-lg border border-border bg-white p-6 shadow-xl data-[state=open]:animate-scale-in-center data-[state=closed]:animate-scale-out-center",
+            className,
+          )}
+          {...props}
+        >
+          {children}
+          <DialogPrimitive.Close asChild>
+            <Button aria-label="Fermer" className="absolute right-3 top-3 transition-smooth hover:bg-muted" size="icon" variant="ghost">
+              <X className="h-4 w-4" />
+            </Button>
+          </DialogPrimitive.Close>
+        </DialogPrimitive.Content>
+      </div>
     </DialogPrimitive.Portal>
   );
 }

@@ -12,7 +12,7 @@ export function DataTable<TData>({ columns, data, emptyLabel = "Aucun résultat"
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-white">
       <table className="w-full text-left text-sm">
-        <thead className="bg-muted text-xs uppercase text-muted-foreground">
+        <thead className="animate-fade-in bg-muted text-xs uppercase text-muted-foreground">
           {table.getHeaderGroups().map((headerGroup) => (
             <tr key={headerGroup.id}>
               {headerGroup.headers.map((header) => (
@@ -25,8 +25,14 @@ export function DataTable<TData>({ columns, data, emptyLabel = "Aucun résultat"
         </thead>
         <tbody>
           {table.getRowModel().rows.length ? (
-            table.getRowModel().rows.map((row) => (
-              <tr className="border-t border-border" key={row.id}>
+            table.getRowModel().rows.map((row, index) => (
+              <tr
+                key={row.id}
+                className={`animate-fade-in animate-slide-in-up border-t border-border transition-colors duration-300 hover:bg-muted/50`}
+                style={{
+                  animationDelay: `${index * 50}ms`,
+                }}
+              >
                 {row.getVisibleCells().map((cell) => (
                   <td className="px-4 py-3" key={cell.id}>
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}

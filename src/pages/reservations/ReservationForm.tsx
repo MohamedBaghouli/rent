@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import type { Car } from "@/types/car";
 import type { Client } from "@/types/client";
 import type { CreateReservationDto, Reservation } from "@/types/reservation";
-import { formatCarName } from "@/utils/car";
+import { formatCarName, formatRegistrationNumber } from "@/utils/car";
 import { normalizeClientName } from "@/utils/client";
 import { combineDateAndTime, formatDateTime, formatRentalDuration, getLocalDateKey, getRentalDays } from "@/utils/date";
 import { formatMoney } from "@/utils/money";
@@ -16,6 +16,9 @@ type ReservationFormProps = {
   cars: Car[];
   clients: Client[];
   reservations: Reservation[];
+  defaultValues?: Partial<Reservation>;
+  excludedReservationId?: number;
+  submitLabel?: string;
 };
 
 type ReservationFormValues = CreateReservationDto & {
@@ -31,10 +34,20 @@ type CarAvailability = {
 };
 
 const selectClassName = "h-10 w-full rounded-md border border-input bg-white px-3 text-sm";
-const activeReservationStatuses: Reservation["status"][] = ["RESERVED", "ONGOING"];
+const activeReservationStatuses: Reservation["status"][] = ["EN_ATTENTE", "RESERVED", "ONGOING"];
 
-export function ReservationForm({ onSubmit, cars, clients, reservations }: ReservationFormProps) {
+export function ReservationForm({
+  onSubmit,
+  cars,
+  clients,
+  reservations,
+  defaultValues,
+  excludedReservationId,
+  submitLabel,
+}: ReservationFormProps) {
   const today = getLocalDateKey(new Date());
+  const initialStart = defaultValues?.startDate ? new Date(defaultValues.startDate) : null;
+  const initialEnd = defaultValues?.endDate ? new Date(defaultValues.endDate) : null;
   const {
     register,
     handleSubmit,
@@ -45,19 +58,22 @@ export function ReservationForm({ onSubmit, cars, clients, reservations }: Reser
   } = useForm<ReservationFormValues>({
     defaultValues: {
       clientId: 0,
+      secondClientId: null,
       carId: 0,
-      startDate: today,
-      endDate: today,
-      pickupTime: "09:00",
-      returnTime: "09:00",
-      dailyPrice: 0,
-      totalPrice: 0,
-      depositAmount: 0,
-      status: "RESERVED",
+      startDate: initialStart ? getLocalDateKey(initialStart) : today,
+      endDate: initialEnd ? getLocalDateKey(initialEnd) : addDaysKey(today, 1),
+      pickupTime: initialStart ? formatTimeInput(initialStart) : "09:00",
+      returnTime: initialEnd ? formatTimeInput(initialEnd) : "09:00",
+      dailyPrice: defaultValues?.dailyPrice ?? 0,
+      totalPrice: defaultValues?.totalPrice ?? 0,
+      depositAmount: defaultValues?.depositAmount ?? 0,
+      status: defaultValues?.status ?? "EN_ATTENTE",
+      ...withoutDateTimeDefaults(defaultValues),
     },
   });
 
   const clientId = Number(watch("clientId"));
+  const secondClientId = Number(watch("secondClientId") ?? 0);
   const carId = Number(watch("carId"));
   const startDate = watch("startDate");
   const endDate = watch("endDate");
@@ -70,13 +86,22 @@ export function ReservationForm({ onSubmit, cars, clients, reservations }: Reser
 
   const selectedClient = useMemo(() => clients.find((client) => client.id === clientId), [clientId, clients]);
   const selectedCar = useMemo(() => cars.find((car) => car.id === carId), [carId, cars]);
+  const defaultClientId = Number(defaultValues?.clientId ?? 0);
+  const defaultSecondClientId = Number(defaultValues?.secondClientId ?? 0);
   const dateRangeIsValid = Boolean(startDateTime && endDateTime && new Date(endDateTime).getTime() > new Date(startDateTime).getTime());
   const rentalDays = dateRangeIsValid ? getRentalDays(startDateTime, endDateTime) : 0;
   const totalPrice = rentalDays * dailyPrice;
+  const selectableClients = useMemo(
+    () =>
+      clients.filter(
+        (client) => isClientActive(client) || client.id === defaultClientId || client.id === defaultSecondClientId,
+      ),
+    [clients, defaultClientId, defaultSecondClientId],
+  );
 
   const availabilityByCar = useMemo(() => {
-    return new Map(cars.map((car) => [car.id, getCarAvailability(car, startDateTime, endDateTime, reservations)]));
-  }, [cars, endDateTime, reservations, startDateTime]);
+    return new Map(cars.map((car) => [car.id, getCarAvailability(car, startDateTime, endDateTime, reservations, excludedReservationId)]));
+  }, [cars, endDateTime, excludedReservationId, reservations, startDateTime]);
 
   const sortedCars = useMemo(
     () =>
@@ -108,16 +133,22 @@ export function ReservationForm({ onSubmit, cars, clients, reservations }: Reser
   }, [setValue, totalPrice]);
 
   useEffect(() => {
-    if (startDate && (!endDate || endDate < startDate)) {
-      setValue("endDate", startDate, { shouldDirty: true, shouldValidate: true });
+    if (startDate && !dirtyFields.endDate) {
+      setValue("endDate", addDaysKey(startDate, 1), { shouldValidate: true });
+    } else if (startDate && endDate && getMinimumEndDateTime(startDate, pickupTime) > new Date(endDateTime).getTime()) {
+      setValue("endDate", addDaysKey(startDate, 1), { shouldDirty: true, shouldValidate: true });
     }
-  }, [endDate, setValue, startDate]);
+  }, [dirtyFields.endDate, endDate, endDateTime, pickupTime, setValue, startDate]);
 
   useEffect(() => {
-    if (pickupTime && !dirtyFields.returnTime) {
+    if (!pickupTime) return;
+    if (!dirtyFields.returnTime) {
+      setValue("returnTime", pickupTime, { shouldValidate: true });
+    } else if (getMinimumEndDateTime(startDate, pickupTime) > new Date(endDateTime).getTime()) {
       setValue("returnTime", pickupTime, { shouldValidate: true });
     }
-  }, [dirtyFields.returnTime, pickupTime, setValue]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dirtyFields.returnTime, pickupTime, startDate, endDate, setValue]);
 
   useEffect(() => {
     if (carId > 0 && dateRangeIsValid) void trigger("carId");
@@ -130,6 +161,7 @@ export function ReservationForm({ onSubmit, cars, clients, reservations }: Reser
       ...reservation,
       carId: Number(data.carId),
       clientId: Number(data.clientId),
+      secondClientId: Number(data.secondClientId) > 0 ? Number(data.secondClientId) : null,
       startDate: startDateTime,
       endDate: endDateTime,
       dailyPrice: Number(data.dailyPrice),
@@ -138,13 +170,10 @@ export function ReservationForm({ onSubmit, cars, clients, reservations }: Reser
     });
   }
 
-  function setToday(field: "startDate" | "endDate") {
+  function setToday() {
     const value = getLocalDateKey(new Date());
-    setValue(field, value, { shouldDirty: true, shouldValidate: true });
-
-    if (field === "startDate" && (!endDate || endDate < value)) {
-      setValue("endDate", value, { shouldDirty: true, shouldValidate: true });
-    }
+    setValue("startDate", value, { shouldDirty: true, shouldValidate: true });
+    setValue("endDate", addDaysKey(value, 1), { shouldDirty: true, shouldValidate: true });
   }
 
   return (
@@ -155,17 +184,46 @@ export function ReservationForm({ onSubmit, cars, clients, reservations }: Reser
           className={selectClassName}
           {...register("clientId", {
             valueAsNumber: true,
-            validate: (value) => Number(value) > 0 || "Sélectionnez un client.",
+            validate: (value) => validateClientSelection(Number(value), clients, defaultClientId),
           })}
         >
           <option value={0}>Sélectionner</option>
-          {clients.map((client) => (
-            <option key={client.id} value={client.id}>
+          {selectableClients.map((client) => (
+            <option disabled={!isClientActive(client) && client.id !== defaultClientId} key={client.id} value={client.id}>
               {normalizeClientName(client.fullName)}
+              {!isClientActive(client) ? " (désactivé)" : ""}
             </option>
           ))}
         </select>
         {errors.clientId && <p className="mt-1 text-xs text-destructive">{errors.clientId.message}</p>}
+      </div>
+
+      <div>
+        <Label>Deuxième conducteur</Label>
+        <select
+          className={selectClassName}
+          {...register("secondClientId", {
+            valueAsNumber: true,
+            validate: (value) => {
+              if (!value) return true;
+              if (Number(value) === clientId) return "Le deuxième conducteur doit être différent du client principal.";
+              return validateClientSelection(Number(value), clients, defaultSecondClientId);
+            },
+          })}
+        >
+          <option value={0}>Aucun</option>
+          {selectableClients.map((client) => (
+            <option
+              disabled={client.id === clientId || (!isClientActive(client) && client.id !== defaultSecondClientId)}
+              key={client.id}
+              value={client.id}
+            >
+              {normalizeClientName(client.fullName)}
+              {!isClientActive(client) ? " (désactivé)" : ""}
+            </option>
+          ))}
+        </select>
+        {errors.secondClientId && <p className="mt-1 text-xs text-destructive">{errors.secondClientId.message}</p>}
       </div>
 
       <div>
@@ -184,7 +242,7 @@ export function ReservationForm({ onSubmit, cars, clients, reservations }: Reser
 
             return (
               <option disabled={!available} key={car.id} value={car.id}>
-                {formatCarName(car.brand, car.model)} - {car.registrationNumber} ({available ? "Disponible" : "Non disponible"})
+                {formatCarName(car.brand, car.model)} - {formatRegistrationNumber(car.registrationNumber)} ({available ? "Disponible" : "Non disponible"})
               </option>
             );
           })}
@@ -205,9 +263,6 @@ export function ReservationForm({ onSubmit, cars, clients, reservations }: Reser
         <div className="min-w-0">
           <div className="mb-1 flex items-center justify-between gap-3">
             <Label>Date début</Label>
-            <Button onClick={() => setToday("startDate")} size="sm" type="button" variant="outline">
-              Aujourd'hui
-            </Button>
           </div>
           <Input
             type="date"
@@ -215,6 +270,9 @@ export function ReservationForm({ onSubmit, cars, clients, reservations }: Reser
               required: "Sélectionnez une date de début.",
             })}
           />
+          <Button className="mt-2" onClick={setToday} size="sm" type="button" variant="outline">
+            Aujourd'hui
+          </Button>
           {errors.startDate && <p className="mt-1 text-xs text-destructive">{errors.startDate.message}</p>}
         </div>
         <div className="min-w-0">
@@ -228,14 +286,9 @@ export function ReservationForm({ onSubmit, cars, clients, reservations }: Reser
           {errors.pickupTime && <p className="mt-1 text-xs text-destructive">{errors.pickupTime.message}</p>}
         </div>
         <div className="min-w-0">
-          <div className="mb-1 flex items-center justify-between gap-3">
-            <Label>Date fin</Label>
-            <Button onClick={() => setToday("endDate")} size="sm" type="button" variant="outline">
-              Aujourd'hui
-            </Button>
-          </div>
+          <Label className="mb-1 block">Date fin</Label>
           <Input
-            min={startDate}
+            min={addDaysKey(startDate, 1)}
             type="date"
             {...register("endDate", {
               required: "Sélectionnez une date de fin.",
@@ -256,6 +309,10 @@ export function ReservationForm({ onSubmit, cars, clients, reservations }: Reser
           {errors.returnTime && <p className="mt-1 text-xs text-destructive">{errors.returnTime.message}</p>}
         </div>
       </div>
+
+      <p className="lg:col-span-2 text-xs text-muted-foreground -mt-2">
+        Durée minimale : 24h. La date fin est proposée automatiquement à Date début + 1 jour.
+      </p>
 
       <div>
         <Label>Prix/jour</Label>
@@ -304,6 +361,7 @@ export function ReservationForm({ onSubmit, cars, clients, reservations }: Reser
         <h3 className="mb-3 font-semibold">Résumé</h3>
         <dl className="grid gap-2">
           <SummaryRow label="Client" value={selectedClient ? normalizeClientName(selectedClient.fullName) : "-"} />
+          <SummaryRow label="Deuxième conducteur" value={secondClientId > 0 ? normalizeClientName(clients.find((client) => client.id === secondClientId)?.fullName) : "-"} />
           <SummaryRow label="Voiture" value={selectedCar ? formatCarName(selectedCar.brand, selectedCar.model) : "-"} />
           <SummaryRow label="Prise" value={formatSummaryDateTime(startDateTime)} />
           <SummaryRow label="Retour" value={formatSummaryDateTime(endDateTime)} />
@@ -315,7 +373,7 @@ export function ReservationForm({ onSubmit, cars, clients, reservations }: Reser
       </div>
 
       <div className="lg:col-span-2 flex justify-end">
-        <Button type="submit">Créer réservation</Button>
+        <Button type="submit">{submitLabel ?? "Créer réservation"}</Button>
       </div>
     </form>
   );
@@ -323,7 +381,8 @@ export function ReservationForm({ onSubmit, cars, clients, reservations }: Reser
 
 function validateEndDateTime(startDateTime: string, endDateTime: string) {
   if (!startDateTime || !endDateTime) return "La période est incomplète.";
-  return new Date(endDateTime).getTime() > new Date(startDateTime).getTime() || "Le retour doit être après la prise.";
+  const diff = new Date(endDateTime).getTime() - new Date(startDateTime).getTime();
+  return diff >= 24 * 60 * 60 * 1000 || "La durée minimale de location est de 24h.";
 }
 
 function validateCarSelection(carId: number, availabilityByCar: Map<number, CarAvailability>) {
@@ -338,7 +397,13 @@ function validateCarSelection(carId: number, availabilityByCar: Map<number, CarA
   return true;
 }
 
-function getCarAvailability(car: Car, startDateTime: string, endDateTime: string, reservations: Reservation[]): CarAvailability {
+function getCarAvailability(
+  car: Car,
+  startDateTime: string,
+  endDateTime: string,
+  reservations: Reservation[],
+  excludedReservationId?: number,
+): CarAvailability {
   const technicalVisitExpired = isTechnicalVisitExpiredForPeriod(car.technicalVisitExpiryDate, endDateTime || startDateTime);
   const dateRangeIsValid = Boolean(startDateTime && endDateTime && new Date(endDateTime).getTime() > new Date(startDateTime).getTime());
   const bookedOnPeriod =
@@ -346,6 +411,7 @@ function getCarAvailability(car: Car, startDateTime: string, endDateTime: string
     reservations.some(
       (reservation) =>
         reservation.carId === car.id &&
+        reservation.id !== excludedReservationId &&
         activeReservationStatuses.includes(reservation.status) &&
         rangesOverlap(startDateTime, endDateTime, reservation.startDate, reservation.endDate),
     );
@@ -381,6 +447,40 @@ function normalizeLegacyDateTime(value: string, boundary: "start" | "end") {
 
 function getSuggestedDeposit(dailyPrice: number) {
   return Math.max(1000, Math.ceil((dailyPrice * 8) / 100) * 100);
+}
+
+function addDaysKey(dateKey: string, days: number) {
+  const date = new Date(`${dateKey}T00:00:00`);
+  date.setDate(date.getDate() + days);
+  return getLocalDateKey(date);
+}
+
+function validateClientSelection(clientId: number, clients: Client[], allowedInactiveClientId = 0) {
+  if (clientId <= 0) return "Sélectionnez un client.";
+
+  const client = clients.find((item) => item.id === clientId);
+  if (!client) return "Client introuvable.";
+  if (!isClientActive(client) && client.id !== allowedInactiveClientId) return "Ce client est désactivé.";
+
+  return true;
+}
+
+function isClientActive(client: Client) {
+  return client.isActive !== false;
+}
+
+function getMinimumEndDateTime(startDate: string, pickupTime: string) {
+  return new Date(combineDateAndTime(startDate, pickupTime)).getTime() + 24 * 60 * 60 * 1000;
+}
+
+function formatTimeInput(date: Date) {
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+function withoutDateTimeDefaults(defaultValues?: Partial<Reservation>): Partial<ReservationFormValues> {
+  if (!defaultValues) return {};
+  const { startDate: _startDate, endDate: _endDate, client: _client, secondClient: _secondClient, car: _car, ...rest } = defaultValues;
+  return rest;
 }
 
 function formatSummaryDateTime(value?: string | null) {

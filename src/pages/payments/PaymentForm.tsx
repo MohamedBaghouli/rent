@@ -7,7 +7,7 @@ import type { Car } from "@/types/car";
 import type { Client } from "@/types/client";
 import type { CreatePaymentDto, Payment, PaymentType } from "@/types/payment";
 import type { Reservation } from "@/types/reservation";
-import { formatCarName } from "@/utils/car";
+import { formatCarName, formatRegistrationNumber } from "@/utils/car";
 import { normalizeClientName } from "@/utils/client";
 import { formatShortPeriod } from "@/utils/date";
 import { formatMoney } from "@/utils/money";
@@ -58,7 +58,7 @@ export function PaymentForm({ onSubmit, reservations, payments, clients, cars }:
       amount: 0,
       type: "RENTAL_PAYMENT",
       method: "CASH",
-      paymentDate: new Date().toISOString().slice(0, 10),
+      paymentDate: new Date().toISOString().slice(0, 16),
       note: "",
       penaltyReason: "",
     },
@@ -69,7 +69,7 @@ export function PaymentForm({ onSubmit, reservations, payments, clients, cars }:
 
   const clientsById = useMemo(() => new Map(clients.map((client) => [client.id, normalizeClientName(client.fullName)])), [clients]);
   const carsById = useMemo(
-    () => new Map(cars.map((car) => [car.id, `${formatCarName(car.brand, car.model)} - ${car.registrationNumber}`])),
+    () => new Map(cars.map((car) => [car.id, `${formatCarName(car.brand, car.model)} - ${formatRegistrationNumber(car.registrationNumber)}`])),
     [cars],
   );
 
@@ -143,6 +143,7 @@ export function PaymentForm({ onSubmit, reservations, payments, clients, cars }:
       ...data,
       amount: Number(data.amount),
       reservationId: Number(data.reservationId),
+      paymentDate: data.paymentDate ? new Date(data.paymentDate).toISOString() : new Date().toISOString(),
       note: paymentNote || null,
     });
   }
@@ -210,8 +211,8 @@ export function PaymentForm({ onSubmit, reservations, payments, clients, cars }:
       </div>
 
       <div>
-        <Label>Date</Label>
-        <Input type="date" {...register("paymentDate")} />
+        <Label>Date et heure</Label>
+        <Input type="datetime-local" {...register("paymentDate")} />
       </div>
 
       {paymentType === "PENALTY" && (
@@ -307,8 +308,9 @@ function getReservationLabel(
   carsById: Map<number, string>,
 ) {
   const client = clientsById.get(reservation.clientId) ?? `Client #${reservation.clientId}`;
+  const secondClient = reservation.secondClientId ? clientsById.get(reservation.secondClientId) : undefined;
   const car = carsById.get(reservation.carId) ?? `Voiture #${reservation.carId}`;
-  return `${client} - ${car} - ${formatShortPeriod(reservation.startDate, reservation.endDate)}`;
+  return `${client}${secondClient ? ` / 2e conducteur: ${secondClient}` : ""} - ${car} - ${formatShortPeriod(reservation.startDate, reservation.endDate)}`;
 }
 
 function SummaryItem({ label, value }: { label: string; value: number }) {

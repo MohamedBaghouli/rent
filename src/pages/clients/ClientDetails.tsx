@@ -7,7 +7,7 @@ export function ClientDetails({ client }: { client: Client }) {
     <Card>
       <CardTitle>{normalizeClientName(client.fullName)}</CardTitle>
       <p className="mt-2 text-sm">{formatPhoneNumber(client.phone)}</p>
-      <p className="text-sm text-muted-foreground">{client.email || "-"}</p>
+      <p className="text-sm text-muted-foreground">{client.cin ? `CIN: ${client.cin}` : client.passportNumber ? `Passeport: ${client.passportNumber}` : "-"}</p>
     </Card>
   );
 }

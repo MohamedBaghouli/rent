@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { PageHeader } from "@/app/layout";
 import { Button } from "@/components/ui/button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useToast } from "@/hooks/useToast";
 
 type SettingsFormValues = {
   agencyName: string;
@@ -53,7 +53,7 @@ const defaultSettings: SettingsFormValues = {
 };
 
 export function SettingsPage() {
-  const [savedMessage, setSavedMessage] = useState("");
+  const { showToast } = useToast();
   const {
     register,
     handleSubmit,
@@ -67,23 +67,25 @@ export function SettingsPage() {
   const logoImage = watch("logoImage");
   const signatureImage = watch("signatureImage");
 
-  useEffect(() => {
-    if (!savedMessage) return;
-
-    const timeout = window.setTimeout(() => setSavedMessage(""), 2500);
-    return () => window.clearTimeout(timeout);
-  }, [savedMessage]);
-
   function submitForm(values: SettingsFormValues) {
-    window.localStorage.setItem(settingsStorageKey, JSON.stringify(values));
-    setSavedMessage("Paramètres enregistrés.");
+    try {
+      window.localStorage.setItem(settingsStorageKey, JSON.stringify(values));
+      showToast({ title: "Paramètres enregistrés", type: "success" });
+    } catch (caught) {
+      showToast({ message: getErrorMessage(caught), title: "Erreur paramètres", type: "error" });
+    }
   }
 
   async function handleImageUpload(field: "logoImage" | "signatureImage", file?: File) {
     if (!file) return;
 
-    const dataUrl = await readFileAsDataUrl(file);
-    setValue(field, dataUrl, { shouldDirty: true });
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      setValue(field, dataUrl, { shouldDirty: true });
+      showToast({ title: "Image chargée", type: "success" });
+    } catch (caught) {
+      showToast({ message: getErrorMessage(caught), title: "Erreur image", type: "error" });
+    }
   }
 
   return (
@@ -197,10 +199,7 @@ export function SettingsPage() {
 
         <div className="flex items-center justify-between gap-4">
           <p className="text-xs text-muted-foreground">* Champs obligatoires</p>
-          <div className="flex items-center gap-3">
-            {savedMessage && <span className="text-sm font-medium text-emerald-700">{savedMessage}</span>}
-            <Button type="submit">Enregistrer les paramètres</Button>
-          </div>
+          <Button type="submit">Enregistrer les paramètres</Button>
         </div>
       </form>
     </>
@@ -290,4 +289,8 @@ function readFileAsDataUrl(file: File) {
     reader.addEventListener("error", () => reject(reader.error));
     reader.readAsDataURL(file);
   });
+}
+
+function getErrorMessage(caught: unknown) {
+  return caught instanceof Error ? caught.message : String(caught);
 }
