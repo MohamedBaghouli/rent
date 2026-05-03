@@ -12,11 +12,11 @@ export function App() {
   return (
     <NotificationsContext.Provider value={notificationsValue}>
       <ToastProvider>
-        <div className="flex min-h-screen overflow-x-hidden bg-background">
+        <div className="min-h-screen overflow-hidden bg-background">
           <Sidebar />
-          <div className="flex min-w-0 flex-1 flex-col">
+          <div className="flex h-screen min-w-0 flex-col md:pl-64">
             <Header />
-            <main className="min-w-0 flex-1 overflow-x-hidden p-4 md:p-6">
+            <main className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-6">
               <PageTransition>
                 <Outlet />
               </PageTransition>

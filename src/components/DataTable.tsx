@@ -1,16 +1,18 @@
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
+import { cn } from "@/lib/utils";
 
 interface DataTableProps<TData> {
+  className?: string;
   columns: ColumnDef<TData>[];
   data: TData[];
   emptyLabel?: string;
 }
 
-export function DataTable<TData>({ columns, data, emptyLabel = "Aucun résultat" }: DataTableProps<TData>) {
+export function DataTable<TData>({ className, columns, data, emptyLabel = "Aucun résultat" }: DataTableProps<TData>) {
   const table = useReactTable({ data, columns, getCoreRowModel: getCoreRowModel() });
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-white">
+    <div className={cn("overflow-hidden rounded-lg border border-border bg-white", className)}>
       <table className="w-full text-left text-sm">
         <thead className="animate-fade-in bg-muted text-xs uppercase text-muted-foreground">
           {table.getHeaderGroups().map((headerGroup) => (
@@ -27,8 +29,8 @@ export function DataTable<TData>({ columns, data, emptyLabel = "Aucun résultat"
           {table.getRowModel().rows.length ? (
             table.getRowModel().rows.map((row, index) => (
               <tr
+                className="animate-fade-in animate-slide-in-up border-t border-border transition-colors duration-300 hover:bg-muted/50"
                 key={row.id}
-                className={`animate-fade-in animate-slide-in-up border-t border-border transition-colors duration-300 hover:bg-muted/50`}
                 style={{
                   animationDelay: `${index * 50}ms`,
                 }}

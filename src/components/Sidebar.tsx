@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 
 export function Sidebar() {
   return (
-    <aside className="hidden w-64 shrink-0 border-r border-border bg-white md:block">
+    <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 shrink-0 border-r border-border bg-white md:block">
       <div className="flex h-16 items-center border-b border-border px-6">
         <span className="text-lg font-semibold text-primary">{appName}</span>
       </div>

@@ -1,0 +1,139 @@
+{
+  "agency": {
+    "name": "AGENCE DE LOCATION",
+    "connectedUser": "Ahmed Mahjoub"
+  },
+  "client": {
+    "name": "Mohamed Bj",
+    "cin": "11445390"
+  },
+  "reservation": {
+    "carName": "Toyota Yaris",
+    "registration": "206 Tunisie 456",
+    "carImageUrl": "https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?auto=format&fit=crop&w=900&q=80",
+    "startDate": "2026-05-07T10:00:00.000Z",
+    "endDate": "2026-05-11T10:00:00.000Z",
+    "days": 4,
+    "paymentMethod": "Espèces",
+    "paymentStatus": "Partiel"
+  },
+  "payment": {
+    "rentalAmount": 380,
+    "extraFees": 0,
+    "totalDue": 380,
+    "totalPaid": 300,
+    "remaining": 80
+  },
+  "deposit": {
+    "amount": 500,
+    "status": "Bloquée",
+    "paidAt": "2026-05-03T16:57:00.000Z",
+    "method": "Espèces",
+    "conditions": "Remboursable après vérification du véhicule",
+    "refundConditions": [
+      "Aucun dommage",
+      "Carburant correct",
+      "Retour à temps",
+      "Aucun frais impayé"
+    ],
+    "warning": "Le remboursement peut prendre 24h à 48h après restitution"
+  },
+  "transactions": [
+    {
+      "id": "TRX-001",
+      "date": "2026-05-03T16:57:00.000Z",
+      "type": "Location",
+      "description": "Paiement partiel location",
+      "amount": 300,
+      "method": "Espèces"
+    },
+    {
+      "id": "TRX-002",
+      "date": "2026-05-03T16:57:00.000Z",
+      "type": "Caution",
+      "description": "Blocage caution de garantie",
+      "amount": 500,
+      "method": "Espèces"
+    },
+    {
+      "id": "TRX-003",
+      "date": "2026-05-04T09:15:00.000Z",
+      "type": "Location",
+      "description": "Frais livraison véhicule",
+      "amount": 20,
+      "method": "Carte"
+    },
+    {
+      "id": "TRX-004",
+      "date": "2026-05-04T11:30:00.000Z",
+      "type": "Location",
+      "description": "Ajustement kilométrage",
+      "amount": 15,
+      "method": "Espèces"
+    },
+    {
+      "id": "TRX-005",
+      "date": "2026-05-05T08:45:00.000Z",
+      "type": "Caution",
+      "description": "Vérification caution en cours",
+      "amount": 0,
+      "method": "Espèces"
+    },
+    {
+      "id": "TRX-006",
+      "date": "2026-05-05T13:10:00.000Z",
+      "type": "Location",
+      "description": "Paiement complémentaire",
+      "amount": 30,
+      "method": "Virement"
+    },
+    {
+      "id": "TRX-007",
+      "date": "2026-05-06T10:00:00.000Z",
+      "type": "Location",
+      "description": "Frais service agence",
+      "amount": 10,
+      "method": "Carte"
+    },
+    {
+      "id": "TRX-008",
+      "date": "2026-05-06T15:25:00.000Z",
+      "type": "Location",
+      "description": "Remise commerciale",
+      "amount": -15,
+      "method": "Carte"
+    },
+    {
+      "id": "TRX-009",
+      "date": "2026-05-07T09:05:00.000Z",
+      "type": "Caution",
+      "description": "Contrôle carburant",
+      "amount": 0,
+      "method": "Espèces"
+    },
+    {
+      "id": "TRX-010",
+      "date": "2026-05-07T17:40:00.000Z",
+      "type": "Location",
+      "description": "Reçu journalier",
+      "amount": 0,
+      "method": "Espèces"
+    },
+    {
+      "id": "TRX-011",
+      "date": "2026-05-08T10:20:00.000Z",
+      "type": "Location",
+      "description": "Paiement solde location",
+      "amount": 80,
+      "method": "Espèces"
+    },
+    {
+      "id": "TRX-012",
+      "date": "2026-05-11T10:35:00.000Z",
+      "type": "Caution",
+      "description": "Caution toujours bloquée",
+      "amount": 500,
+      "method": "Espèces"
+    }
+  ]
+}

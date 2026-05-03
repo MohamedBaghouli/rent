@@ -1,10 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
-import type { ColumnDef } from "@tanstack/react-table";
-import { Plus, ReceiptText } from "lucide-react";
+import {
+  Banknote,
+  CalendarDays,
+  Check,
+  Eye,
+  Plus,
+  ReceiptText,
+  RotateCcw,
+  ShieldCheck,
+} from "lucide-react";
+import { Link } from "react-router-dom";
 import { PageHeader } from "@/app/layout";
-import { DataTable } from "@/components/DataTable";
+import { Pagination } from "@/components/Pagination";
 import { Button } from "@/components/ui/button";
-import { Card, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { PaymentForm } from "@/pages/payments/PaymentForm";
 import { getCars } from "@/services/car.service";
@@ -15,41 +23,29 @@ import type { Car } from "@/types/car";
 import type { Client } from "@/types/client";
 import type { CreatePaymentDto, Payment } from "@/types/payment";
 import type { Reservation } from "@/types/reservation";
+import { cn } from "@/lib/utils";
 import { formatCarName, formatRegistrationNumber } from "@/utils/car";
 import { normalizeClientName } from "@/utils/client";
-import { formatDateTime, formatShortPeriod } from "@/utils/date";
+import { formatShortPeriod } from "@/utils/date";
 import { formatMoney } from "@/utils/money";
 import { useToast } from "@/hooks/useToast";
+
+type PaymentStatus = "Non payé" | "Partiel" | "Payé" | "Annulée";
+type DepositStatus = "Non versée" | "Bloquée" | "Remboursée" | "Retenue";
 
 type ReservationSummary = {
   car?: Car;
   client?: Client;
-  secondClient?: Client;
+  depositAmount: number;
+  depositPaid: number;
+  depositRefunded: number;
+  depositStatus: DepositStatus;
+  latestPayment?: Payment;
   paid: number;
   remaining: number;
   reservation: Reservation;
-  status: "Non payé" | "Partiellement payé" | "Payé" | "Annulée";
-};
-
-const paymentTypeLabels: Record<Payment["type"], string> = {
-  RENTAL_PAYMENT: "Location",
-  DEPOSIT: "Caution",
-  DEPOSIT_REFUND: "Remboursement",
-  PENALTY: "Pénalité",
-};
-
-const paymentMethodLabels: Record<Payment["method"], string> = {
-  CASH: "Espèces",
-  CARD: "Carte",
-  BANK_TRANSFER: "Virement",
-  CHECK: "Chèque",
-};
-
-const paymentMethodIcons: Record<Payment["method"], string> = {
-  CASH: "💵",
-  CARD: "💳",
-  BANK_TRANSFER: "🏦",
-  CHECK: "🧾",
+  secondClient?: Client;
+  status: PaymentStatus;
 };
 
 export function PaymentsPage() {
@@ -58,6 +54,9 @@ export function PaymentsPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [cars, setCars] = useState<Car[]>([]);
   const [reservationFilter, setReservationFilter] = useState<number>(0);
+  const [statusFilter, setStatusFilter] = useState<"ALL" | PaymentStatus>("ALL");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
   const [open, setOpen] = useState(false);
   const { showToast } = useToast();
 
@@ -80,75 +79,78 @@ export function PaymentsPage() {
 
   const clientsById = useMemo(() => new Map(clients.map((client) => [client.id, client])), [clients]);
   const carsById = useMemo(() => new Map(cars.map((car) => [car.id, car])), [cars]);
-  const reservationsById = useMemo(
-    () => new Map(reservations.map((reservation) => [reservation.id, reservation])),
-    [reservations],
-  );
-
   const summaries = useMemo(
     () =>
       reservations.map((reservation): ReservationSummary => {
-        const paid = sumPayments(payments, reservation.id, "RENTAL_PAYMENT");
+        const reservationPayments = payments.filter((payment) => payment.reservationId === reservation.id);
+        const depositPaid = sumPayments(reservationPayments, "DEPOSIT");
+        const depositRefunded = sumPayments(reservationPayments, "DEPOSIT_REFUND");
+        const depositAmount = reservation.depositAmount || depositPaid;
+        const paid = sumPayments(reservationPayments, "RENTAL_PAYMENT");
+        const latestPayment = [...reservationPayments].sort(
+          (first, second) => new Date(second.paymentDate).getTime() - new Date(first.paymentDate).getTime(),
+        )[0];
         const remaining = Math.max(0, reservation.totalPrice - paid);
         const status =
-          reservation.status === "CANCELLED" ? "Annulée" : paid <= 0 ? "Non payé" : remaining > 0 ? "Partiellement payé" : "Payé";
+          reservation.status === "CANCELLED" ? "Annulée" : paid <= 0 ? "Non payé" : remaining > 0 ? "Partiel" : "Payé";
 
         return {
           car: carsById.get(reservation.carId),
           client: clientsById.get(reservation.clientId),
-          secondClient: reservation.secondClientId ? clientsById.get(reservation.secondClientId) : undefined,
+          depositAmount,
+          depositPaid,
+          depositRefunded,
+          depositStatus: getDepositStatus(depositAmount, depositPaid, depositRefunded),
+          latestPayment,
           paid,
           remaining,
           reservation,
+          secondClient: reservation.secondClientId ? clientsById.get(reservation.secondClientId) : undefined,
           status,
         };
       }),
     [carsById, clientsById, payments, reservations],
   );
 
-  const filteredPayments = useMemo(
-    () =>
-      [...payments]
-        .filter((payment) => reservationFilter === 0 || payment.reservationId === reservationFilter)
-        .sort((first, second) => {
-          const dateDiff = new Date(second.paymentDate).getTime() - new Date(first.paymentDate).getTime();
-          return dateDiff || second.id - first.id;
-        }),
-    [payments, reservationFilter],
-  );
-
-  const visibleSummaries = useMemo(
+  const filteredSummaries = useMemo(
     () =>
       summaries
         .filter((summary) => reservationFilter === 0 || summary.reservation.id === reservationFilter)
-        .sort((first, second) => second.remaining - first.remaining)
-        .slice(0, 3),
-    [reservationFilter, summaries],
+        .filter((summary) => statusFilter === "ALL" || summary.status === statusFilter)
+        .sort((first, second) => second.remaining - first.remaining),
+    [reservationFilter, statusFilter, summaries],
   );
 
-  const columns: ColumnDef<Payment>[] = [
-    { header: "Client", cell: ({ row }) => <ClientCell client={getPaymentClient(row.original, reservationsById, clientsById)} /> },
-    { header: "Voiture", cell: ({ row }) => <PaymentCarCell car={getPaymentCar(row.original, reservationsById, carsById)} /> },
-    { header: "Montant", cell: ({ row }) => formatMoney(row.original.amount) },
-    { header: "Type", cell: ({ row }) => paymentTypeLabels[row.original.type] },
-    {
-      header: "Méthode",
-      cell: ({ row }) => (
-        <span title={paymentMethodLabels[row.original.method]}>
-          {paymentMethodIcons[row.original.method]} {paymentMethodLabels[row.original.method]}
-        </span>
-      ),
-    },
-    { header: "Date", cell: ({ row }) => formatDateTime(row.original.paymentDate) },
-    {
-      header: "Reçu",
-      cell: ({ row }) => (
-        <Button aria-label="Reçu" onClick={() => showReceipt(row.original)} size="icon" title="Reçu" variant="ghost">
-          <ReceiptText className="h-4 w-4" />
-        </Button>
-      ),
-    },
-  ];
+  const paginatedSummaries = useMemo(() => {
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    return filteredSummaries.slice(startIndex, startIndex + itemsPerPage);
+  }, [currentPage, filteredSummaries, itemsPerPage]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [reservationFilter, statusFilter]);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(filteredSummaries.length / itemsPerPage));
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, filteredSummaries.length, itemsPerPage]);
+
+  const totals = useMemo(() => {
+    const totalDue = reservations.reduce((sum, reservation) => sum + reservation.totalPrice, 0);
+    const totalPaid = payments
+      .filter((payment) => payment.type === "RENTAL_PAYMENT")
+      .reduce((sum, payment) => sum + payment.amount, 0);
+
+    return {
+      depositPaid: payments.filter((payment) => payment.type === "DEPOSIT").reduce((sum, payment) => sum + payment.amount, 0),
+      depositRefunded: payments.filter((payment) => payment.type === "DEPOSIT_REFUND").reduce((sum, payment) => sum + payment.amount, 0),
+      remaining: Math.max(0, totalDue - totalPaid),
+      totalDue,
+      totalPaid,
+    };
+  }, [payments, reservations]);
 
   async function handleCreate(data: CreatePaymentDto) {
     try {
@@ -161,25 +163,8 @@ export function PaymentsPage() {
     }
   }
 
-  function showReceipt(payment: Payment) {
-    const reservation = reservationsById.get(payment.reservationId);
-    const client = reservation ? clientsById.get(reservation.clientId) : undefined;
-    const secondClient = reservation?.secondClientId ? clientsById.get(reservation.secondClientId) : undefined;
-    const car = reservation ? carsById.get(reservation.carId) : undefined;
-
-    showToast({
-      message: `Client: ${client ? normalizeClientName(client.fullName) : "-"}${
-        secondClient ? ` | 2e conducteur: ${normalizeClientName(secondClient.fullName)}` : ""
-      } | Voiture: ${
-        car ? formatCarName(car.brand, car.model) : "-"
-      } | ${formatMoney(payment.amount)} | ${paymentMethodLabels[payment.method]}`,
-      title: `Reçu paiement #${payment.id}`,
-      type: "info",
-    });
-  }
-
   return (
-    <>
+    <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
       <PageHeader title="Paiements">
         <Dialog onOpenChange={setOpen} open={open}>
           <DialogTrigger asChild>
@@ -197,112 +182,291 @@ export function PaymentsPage() {
         </Dialog>
       </PageHeader>
 
-      <div className="mb-4 max-w-xl">
-        <select
-          className="h-10 w-full rounded-md border border-input bg-white px-3 text-sm"
-          onChange={(event) => setReservationFilter(Number(event.target.value))}
-          value={reservationFilter}
-        >
-          <option value={0}>Toutes les réservations</option>
-          {summaries.map((summary) => (
-            <option key={summary.reservation.id} value={summary.reservation.id}>
-              {getReservationLabel(summary)}
-            </option>
-          ))}
-        </select>
-      </div>
+      <StatsGrid totals={totals} />
 
-      <div className="mb-4 grid gap-4 lg:grid-cols-3">
-        {visibleSummaries.map((summary) => (
-          <PaymentSummaryCard key={summary.reservation.id} summary={summary} />
-        ))}
-      </div>
+      <section className="grid gap-4 rounded-lg border border-border bg-white p-4 shadow-sm xl:grid-cols-3">
+        <FilterField label="Filtrer par réservation">
+          <select
+            className="h-10 w-full rounded-md border border-input bg-white px-3 text-sm outline-none transition-smooth hover:border-primary focus:border-primary focus:ring-2 focus:ring-primary/15"
+            onChange={(event) => setReservationFilter(Number(event.target.value))}
+            value={reservationFilter}
+          >
+            <option value={0}>Toutes les réservations</option>
+            {summaries.map((summary) => (
+              <option key={summary.reservation.id} value={summary.reservation.id}>
+                {getReservationLabel(summary)}
+              </option>
+            ))}
+          </select>
+        </FilterField>
 
-      <DataTable columns={columns} data={filteredPayments} />
-    </>
+        <FilterField label="Statut de paiement">
+          <select
+            className="h-10 w-full rounded-md border border-input bg-white px-3 text-sm outline-none transition-smooth hover:border-primary focus:border-primary focus:ring-2 focus:ring-primary/15"
+            onChange={(event) => setStatusFilter(event.target.value as "ALL" | PaymentStatus)}
+            value={statusFilter}
+          >
+            <option value="ALL">Tous les statuts</option>
+            <option value="Payé">Payé</option>
+            <option value="Partiel">Partiel</option>
+            <option value="Non payé">Non payé</option>
+            <option value="Annulée">Annulée</option>
+          </select>
+        </FilterField>
+
+        <FilterField label="Période">
+          <div className="flex h-10 items-center gap-2 rounded-md border border-input bg-white px-3 text-sm text-foreground">
+            <CalendarDays className="h-4 w-4 text-muted-foreground" />
+            {"01/05/2026 -> 31/05/2026"}
+          </div>
+        </FilterField>
+      </section>
+
+      <section className="overflow-hidden rounded-lg border border-border bg-white shadow-sm">
+        <PaymentsDataGrid rows={paginatedSummaries} />
+        <Pagination
+          currentPage={currentPage}
+          itemsPerPage={itemsPerPage}
+          onItemsPerPageChange={(nextItemsPerPage) => {
+            setItemsPerPage(nextItemsPerPage);
+            setCurrentPage(1);
+          }}
+          onPageChange={setCurrentPage}
+          totalItems={filteredSummaries.length}
+        />
+      </section>
+    </div>
   );
 }
 
-function PaymentSummaryCard({ summary }: { summary: ReservationSummary }) {
+function StatsGrid({
+  totals,
+}: {
+  totals: { depositPaid: number; depositRefunded: number; remaining: number; totalDue: number; totalPaid: number };
+}) {
   return (
-    <Card>
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <CardTitle>{summary.client ? normalizeClientName(summary.client.fullName) : "Client inconnu"}</CardTitle>
-          {summary.secondClient && (
-            <p className="mt-1 text-xs text-muted-foreground">2e conducteur : {normalizeClientName(summary.secondClient.fullName)}</p>
-          )}
-          <p className="mt-1 text-sm text-muted-foreground">{formatSummaryCar(summary.car)}</p>
-        </div>
-        <PaymentStatus label={summary.status} />
-      </div>
-      <dl className="mt-4 space-y-2 text-sm">
-        <SummaryRow label="Période" value={formatShortPeriod(summary.reservation.startDate, summary.reservation.endDate)} />
-        <SummaryRow label="Total dû" value={formatMoney(summary.reservation.totalPrice)} />
-        <SummaryRow label="Total payé" value={formatMoney(summary.paid)} />
-        <SummaryRow emphasized label="Reste" value={formatMoney(summary.remaining)} />
-      </dl>
-      {summary.reservation.status === "COMPLETED" && summary.remaining > 0 && (
-        <p className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
-          Location terminée : paiement complet attendu.
-        </p>
-      )}
-      {summary.reservation.status === "CANCELLED" && (
-        <p className="mt-3 rounded-md bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700">
-          Réservation annulée : aucun paiement location attendu.
-        </p>
-      )}
-    </Card>
+    <section className="grid grid-cols-5 gap-4">
+      <StatCard
+        description="Somme de toutes les réservations"
+        icon={CalendarDays}
+        label="Total dû"
+        tone="blue"
+        value={formatMoney(totals.totalDue)}
+      />
+      <StatCard
+        description="Somme des paiements reçus"
+        icon={Banknote}
+        label="Total payé"
+        tone="green"
+        value={formatMoney(totals.totalPaid)}
+      />
+      <StatCard
+        description="Montant restant à encaisser"
+        icon={ReceiptText}
+        label="Reste à payer"
+        tone="orange"
+        value={formatMoney(totals.remaining)}
+      />
+      <StatCard
+        description="Cautions actuellement versées"
+        icon={ShieldCheck}
+        label="Caution versée"
+        tone="purple"
+        value={formatMoney(totals.depositPaid)}
+      />
+      <StatCard
+        description="Cautions déjà remboursées"
+        icon={RotateCcw}
+        label="Caution remboursée"
+        tone="green"
+        value={formatMoney(totals.depositRefunded)}
+      />
+    </section>
   );
 }
 
-function PaymentStatus({ label }: { label: ReservationSummary["status"] }) {
+function StatCard({
+  icon: Icon,
+  description,
+  label,
+  tone,
+  value,
+}: {
+  description: string;
+  icon: typeof Banknote;
+  label: string;
+  tone: "blue" | "green" | "orange" | "purple";
+  value: string;
+}) {
+  const tones = {
+    blue: "border-blue-200 bg-blue-50/40 text-blue-700",
+    green: "border-emerald-200 bg-emerald-50/40 text-emerald-700",
+    orange: "border-amber-200 bg-amber-50/50 text-amber-700",
+    purple: "border-violet-200 bg-violet-50/40 text-violet-700",
+  };
+
+  return (
+    <article className={cn("min-h-[112px] rounded-lg border bg-white p-4 shadow-sm transition-smooth hover:-translate-y-0.5 hover:shadow-md", tones[tone])}>
+      <div className="flex min-w-0 items-start gap-3">
+        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-white/80">
+          <Icon className="h-5 w-5" />
+        </span>
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-foreground/75">{label}</p>
+          <p className="mt-1 truncate text-2xl font-semibold text-foreground">{value}</p>
+        </div>
+      </div>
+      <p className="mt-3 truncate text-xs font-medium text-muted-foreground">{description}</p>
+    </article>
+  );
+}
+
+function FilterField({ children, label }: { children: React.ReactNode; label: string }) {
+  return (
+    <label className="space-y-2">
+      <span className="text-xs font-semibold text-muted-foreground">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function PaymentsDataGrid({ rows }: { rows: ReservationSummary[] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[980px] border-separate border-spacing-0 text-left text-sm" role="grid">
+        <thead className="bg-slate-50 text-xs uppercase text-muted-foreground">
+          <tr>
+            <TableHead>Client</TableHead>
+            <TableHead>Véhicule</TableHead>
+            <TableHead>Période</TableHead>
+            <TableHead>Total dû</TableHead>
+            <TableHead>Total payé</TableHead>
+            <TableHead>Reste</TableHead>
+            <TableHead>Caution</TableHead>
+            <TableHead>Statut</TableHead>
+            <TableHead className="text-right">Détail</TableHead>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 ? (
+            <tr>
+              <td className="px-4 py-10 text-center text-muted-foreground" colSpan={9}>
+                Aucun résumé de paiement trouvé
+              </td>
+            </tr>
+          ) : (
+            rows.map((row) => (
+              <tr className="border-t border-border transition-colors hover:bg-muted/40" key={row.reservation.id}>
+                <TableCell>
+                  <p className="font-semibold">{row.client ? normalizeClientName(row.client.fullName) : "Client inconnu"}</p>
+                  <p className="text-xs text-muted-foreground">{getClientIdentifier(row.client)}</p>
+                </TableCell>
+                <TableCell>
+                  <p className="font-semibold">{row.car ? formatCarName(row.car.brand, row.car.model) : "Voiture inconnue"}</p>
+                  <p className="text-xs text-muted-foreground">{row.car ? `(${formatRegistrationNumber(row.car.registrationNumber)})` : "-"}</p>
+                </TableCell>
+                <TableCell>{formatShortPeriod(row.reservation.startDate, row.reservation.endDate)}</TableCell>
+                <TableCell className="font-semibold">{formatMoney(row.reservation.totalPrice)}</TableCell>
+                <TableCell className="font-semibold text-emerald-700">{formatMoney(row.paid)}</TableCell>
+                <TableCell className={cn("font-semibold", row.remaining > 0 ? "text-red-600" : "text-foreground")}>
+                  {formatMoney(row.remaining)}
+                </TableCell>
+                <TableCell>
+                  <DepositBadge summary={row} />
+                </TableCell>
+                <TableCell>
+                  <PaymentStatus label={row.status} />
+                </TableCell>
+                <TableCell className="text-right">
+                  <Button asChild size="icon" title="Voir détail" variant="ghost">
+                    <Link to={row.latestPayment ? `/payments/${row.latestPayment.id}` : "/payments/detail"}>
+                      <Eye className="h-4 w-4" />
+                    </Link>
+                  </Button>
+                </TableCell>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function PaymentStatus({ label }: { label: PaymentStatus }) {
   const className =
     label === "Payé"
       ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
-      : label === "Partiellement payé"
+      : label === "Partiel"
         ? "bg-amber-50 text-amber-700 ring-amber-200"
         : label === "Annulée"
           ? "bg-slate-50 text-slate-700 ring-slate-200"
           : "bg-red-50 text-red-700 ring-red-200";
 
-  return <span className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ring-1 ${className}`}>{label}</span>;
+  return (
+    <span className={cn("inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold ring-1", className)}>
+      {label}
+      {label === "Payé" && <Check className="h-3 w-3" />}
+    </span>
+  );
 }
 
-function SummaryRow({ emphasized, label, value }: { emphasized?: boolean; label: string; value: string }) {
+function DepositBadge({ summary }: { summary: ReservationSummary }) {
+  const className =
+    summary.depositStatus === "Remboursée"
+      ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
+      : summary.depositStatus === "Retenue"
+        ? "bg-red-50 text-red-700 ring-red-200"
+        : summary.depositStatus === "Bloquée"
+          ? "bg-amber-50 text-amber-700 ring-amber-200"
+          : "bg-slate-50 text-slate-700 ring-slate-200";
+
   return (
-    <div className={`flex items-center justify-between gap-3 ${emphasized ? "border-t border-border pt-2 font-semibold" : ""}`}>
+    <div className="flex flex-col items-start gap-1">
+      <span className={cn("inline-flex rounded-md px-2 py-1 text-xs font-semibold ring-1", className)}>
+        {formatMoney(summary.depositAmount)}
+      </span>
+      <span className="text-xs font-medium text-muted-foreground">{summary.depositStatus}</span>
+    </div>
+  );
+}
+
+function SummaryRow({
+  emphasized,
+  label,
+  tone,
+  value,
+}: {
+  emphasized?: boolean;
+  label: string;
+  tone?: "danger" | "paid";
+  value: string;
+}) {
+  return (
+    <div className={cn("flex items-center justify-between gap-4 py-2", emphasized && "border-t border-border pt-3 font-semibold")}>
       <dt className="text-muted-foreground">{label}</dt>
-      <dd>{value}</dd>
+      <dd className={cn("font-semibold", tone === "paid" && "text-emerald-700", tone === "danger" && "text-red-600")}>{value}</dd>
     </div>
   );
 }
 
-function PaymentCarCell({ car }: { car?: Car }) {
-  if (!car) return <span>-</span>;
-
-  return (
-    <div>
-      <p className="font-medium">{formatCarName(car.brand, car.model)}</p>
-      <p className="text-xs text-muted-foreground">({formatRegistrationNumber(car.registrationNumber)})</p>
-    </div>
-  );
+function TableHead({ children, className }: { children: React.ReactNode; className?: string }) {
+  return <th className={cn("px-4 py-3 font-semibold", className)}>{children}</th>;
 }
 
-function sumPayments(payments: Payment[], reservationId: number, type: Payment["type"]) {
-  return payments
-    .filter((payment) => payment.reservationId === reservationId && payment.type === type)
-    .reduce((sum, payment) => sum + payment.amount, 0);
+function TableCell({ children, className }: { children: React.ReactNode; className?: string }) {
+  return <td className={cn("px-4 py-3 align-middle", className)}>{children}</td>;
 }
 
-function getPaymentClient(payment: Payment, reservationsById: Map<number, Reservation>, clientsById: Map<number, Client>) {
-  const reservation = reservationsById.get(payment.reservationId);
-  return reservation ? clientsById.get(reservation.clientId) : undefined;
+function sumPayments(payments: Payment[], type: Payment["type"]) {
+  return payments.filter((payment) => payment.type === type).reduce((sum, payment) => sum + payment.amount, 0);
 }
 
-function getPaymentCar(payment: Payment, reservationsById: Map<number, Reservation>, carsById: Map<number, Car>) {
-  const reservation = reservationsById.get(payment.reservationId);
-  return reservation ? carsById.get(reservation.carId) : undefined;
+function getDepositStatus(depositAmount: number, depositPaid: number, depositRefunded: number): DepositStatus {
+  if (depositPaid <= 0) return "Non versée";
+  if (depositAmount > 0 && depositRefunded >= depositAmount) return "Remboursée";
+  if (depositRefunded > 0 && depositRefunded < depositAmount) return "Retenue";
+  return "Bloquée";
 }
 
 function getReservationLabel(summary: ReservationSummary) {
@@ -317,15 +481,11 @@ function formatSummaryCar(car?: Car) {
   return `${formatCarName(car.brand, car.model)} (${formatRegistrationNumber(car.registrationNumber)})`;
 }
 
-function ClientCell({ client }: { client?: Client }) {
-  if (!client) return <span>-</span>;
-
-  return (
-    <div>
-      <p>{normalizeClientName(client.fullName)}</p>
-      <p className="text-xs text-muted-foreground">{client.cin ? `CIN : ${client.cin}` : client.passportNumber ? `Passeport : ${client.passportNumber}` : "Pièce : -"}</p>
-    </div>
-  );
+function getClientIdentifier(client?: Client) {
+  if (!client) return "Pièce : -";
+  if (client.cin) return `CIN : ${client.cin}`;
+  if (client.passportNumber) return `Passeport : ${client.passportNumber}`;
+  return "Pièce : -";
 }
 
 function getErrorMessage(caught: unknown) {
