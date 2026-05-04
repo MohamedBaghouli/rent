@@ -12,10 +12,10 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
     <aside
       className={cn(
         "fixed inset-y-0 left-0 z-30 hidden shrink-0 border-r border-border bg-white transition-smooth dark:bg-slate-950 md:block",
-        collapsed ? "w-16" : "w-64",
+        collapsed ? "w-16" : "w-52",
       )}
     >
-      <div className={cn("flex h-16 items-center border-b border-border", collapsed ? "justify-center px-0" : "gap-3 px-4")}>
+      <div className={cn("flex h-16 items-center border-b border-border", collapsed ? "justify-center px-0" : "gap-2 px-3")}>
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white shadow-sm">
           <CarFront className="h-4 w-4" />
         </span>

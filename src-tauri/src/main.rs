@@ -1,8 +1,10 @@
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 use std::{
     fs,
     path::{Path, PathBuf},
+    process::Command,
     sync::Mutex,
 };
 
@@ -1288,6 +1290,249 @@ fn map_client_db_error(error: rusqlite::Error) -> String {
     message
 }
 
+// ----- AI / ML offline integration -----
+
+fn project_root() -> Result<PathBuf, String> {
+    let current_dir = std::env::current_dir().map_err(|error| error.to_string())?;
+    if current_dir.file_name().and_then(|name| name.to_str()) == Some("src-tauri") {
+        current_dir
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| "Impossible de résoudre le dossier projet".to_string())
+    } else {
+        Ok(current_dir)
+    }
+}
+
+fn resolve_models_dir(model_path: Option<String>) -> Result<PathBuf, String> {
+    let root = project_root()?;
+    let raw = model_path
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "ml/models".to_string());
+    let candidate = PathBuf::from(&raw);
+    let absolute = if candidate.is_absolute() {
+        candidate
+    } else {
+        root.join(candidate)
+    };
+    Ok(absolute)
+}
+
+fn resolve_python_executable(python_path: Option<String>) -> Option<String> {
+    if let Some(path) = python_path {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    let candidates = if cfg!(target_os = "windows") {
+        vec!["python", "python3", "py"]
+    } else {
+        vec!["python3", "python"]
+    };
+    for candidate in candidates {
+        if Command::new(candidate).arg("--version").output().is_ok() {
+            return Some(candidate.to_string());
+        }
+    }
+    None
+}
+
+fn run_python_script(
+    python_path: Option<String>,
+    script_relative: &str,
+    extra_args: &[(&str, String)],
+) -> Result<String, String> {
+    let python = resolve_python_executable(python_path).ok_or_else(|| {
+        "Python n'est pas disponible sur cette machine. Installez Python ou configurez le chemin Python dans les paramètres.".to_string()
+    })?;
+
+    let root = project_root()?;
+    let script = root.join(script_relative);
+    if !script.exists() {
+        return Err(format!(
+            "Script Python introuvable : {}",
+            script.display()
+        ));
+    }
+
+    let db = db_path()?;
+    let mut command = Command::new(&python);
+    command.arg(&script).arg("--db").arg(&db);
+    for (flag, value) in extra_args {
+        command.arg(flag).arg(value);
+    }
+
+    let output = command
+        .output()
+        .map_err(|error| format!("Erreur exécution Python : {error}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "Le script Python a échoué : {}",
+            stderr.trim()
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    Ok(stdout)
+}
+
+fn parse_json_stdout(stdout: &str) -> Result<JsonValue, String> {
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        return Err("Sortie Python vide.".to_string());
+    }
+    let last_line = trimmed.lines().last().unwrap_or(trimmed).trim();
+    serde_json::from_str::<JsonValue>(last_line)
+        .or_else(|_| serde_json::from_str::<JsonValue>(trimmed))
+        .map_err(|error| format!("Réponse Python invalide : {error}"))
+}
+
+fn execution_error_value(message: &str) -> JsonValue {
+    serde_json::json!({
+        "success": false,
+        "reason": "EXECUTION_ERROR",
+        "message": message,
+    })
+}
+
+fn python_missing_value() -> JsonValue {
+    serde_json::json!({
+        "success": false,
+        "reason": "PYTHON_NOT_FOUND",
+        "message": "Python n'est pas disponible sur cette machine. Installez Python ou configurez le chemin Python dans les paramètres.",
+    })
+}
+
+#[tauri::command]
+fn train_ai_models(
+    python_path: Option<String>,
+    model_path: Option<String>,
+    min_reservations: Option<i64>,
+) -> Result<JsonValue, String> {
+    let models_dir = resolve_models_dir(model_path)?;
+    fs::create_dir_all(&models_dir).map_err(|error| error.to_string())?;
+    let min_reservations_value = min_reservations.unwrap_or(30).to_string();
+
+    if resolve_python_executable(python_path.clone()).is_none() {
+        return Ok(python_missing_value());
+    }
+
+    let extra_args = vec![
+        ("--models", models_dir.to_string_lossy().to_string()),
+        ("--min-reservations", min_reservations_value),
+    ];
+
+    match run_python_script(python_path, "ml/train_model.py", &extra_args) {
+        Ok(stdout) => parse_json_stdout(&stdout).or_else(|error| Ok(execution_error_value(&error))),
+        Err(error) => Ok(execution_error_value(&error)),
+    }
+}
+
+#[tauri::command]
+fn run_ai_forecast(
+    python_path: Option<String>,
+    model_path: Option<String>,
+) -> Result<JsonValue, String> {
+    let models_dir = resolve_models_dir(model_path)?;
+
+    if !models_dir.join("revenue_model.pkl").exists()
+        || !models_dir.join("demand_model.pkl").exists()
+    {
+        return Ok(serde_json::json!({
+            "success": false,
+            "reason": "INSUFFICIENT_DATA",
+            "message": "Modèles non entraînés. Lancez d'abord l'entraînement.",
+        }));
+    }
+
+    if resolve_python_executable(python_path.clone()).is_none() {
+        return Ok(python_missing_value());
+    }
+
+    let extra_args = vec![("--models", models_dir.to_string_lossy().to_string())];
+
+    match run_python_script(python_path, "ml/predict.py", &extra_args) {
+        Ok(stdout) => parse_json_stdout(&stdout).or_else(|error| Ok(execution_error_value(&error))),
+        Err(error) => Ok(execution_error_value(&error)),
+    }
+}
+
+#[tauri::command]
+fn get_ai_model_status(
+    python_path: Option<String>,
+    model_path: Option<String>,
+) -> Result<JsonValue, String> {
+    let models_dir = resolve_models_dir(model_path)?;
+    let expected = ["revenue_model.pkl", "demand_model.pkl", "client_segments.pkl"];
+
+    let mut found = Vec::new();
+    let mut last_modified: Option<String> = None;
+    for name in expected {
+        let path = models_dir.join(name);
+        if path.exists() {
+            found.push(name.to_string());
+            if let Ok(metadata) = fs::metadata(&path) {
+                if let Ok(modified) = metadata.modified() {
+                    if let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH) {
+                        let secs = duration.as_secs() as i64;
+                        let candidate = format_unix_seconds(secs);
+                        last_modified = Some(match last_modified {
+                            Some(existing) if existing >= candidate => existing,
+                            _ => candidate,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    let resolved_python = resolve_python_executable(python_path.clone());
+    let trained = found.len() >= 2;
+
+    Ok(serde_json::json!({
+        "trained": trained,
+        "lastTrainedAt": last_modified,
+        "modelsFound": found,
+        "pythonAvailable": resolved_python.is_some(),
+        "pythonPath": resolved_python,
+        "message": if resolved_python.is_some() {
+            None
+        } else {
+            Some("Python n'est pas disponible sur cette machine.".to_string())
+        },
+    }))
+}
+
+fn format_unix_seconds(secs: i64) -> String {
+    let days = secs.div_euclid(86_400);
+    let remainder = secs.rem_euclid(86_400);
+    let (year, month, day) = civil_from_days(days);
+    let hour = remainder / 3600;
+    let minute = (remainder % 3600) / 60;
+    let second = remainder % 60;
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
+        year, month, day, hour, minute, second
+    )
+}
+
+fn civil_from_days(days: i64) -> (i32, u32, u32) {
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let year = (y + if m <= 2 { 1 } else { 0 }) as i32;
+    (year, m, d)
+}
+
 fn main() {
     let db = init_db().expect("failed to initialize local SQLite database");
 
@@ -1315,7 +1560,10 @@ fn main() {
             create_payment,
             get_contracts,
             generate_contract,
-            get_dashboard_stats
+            get_dashboard_stats,
+            train_ai_models,
+            run_ai_forecast,
+            get_ai_model_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

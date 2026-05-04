@@ -1,5 +1,6 @@
 import {
   Banknote,
+  Brain,
   CalendarDays,
   Car,
   FileText,
@@ -15,6 +16,7 @@ export const navigationItems = [
   { label: "Clients", path: "/clients", icon: UserRound },
   { label: "Réservations", path: "/reservations", icon: CalendarDays },
   { label: "Paiements", path: "/payments", icon: Banknote },
+  { label: "Prévisions IA", path: "/ai-forecast", icon: Brain },
   { label: "Contrats", path: "/contracts", icon: FileText },
   { label: "Paramètres", path: "/settings", icon: Settings },
 ];

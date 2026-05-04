@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { PageHeader } from "@/app/layout";
 import { Button } from "@/components/ui/button";
@@ -5,6 +6,8 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/useToast";
+import { loadAISettings, saveAISettings } from "@/services/aiForecastService";
+import type { AISettings } from "@/types/aiForecast";
 
 type SettingsFormValues = {
   agencyName: string;
@@ -196,6 +199,8 @@ export function SettingsPage() {
           </div>
         </SettingsSection>
 
+        <AISettingsSection />
+
         <div className="flex items-center justify-between gap-4">
           <p className="text-xs text-muted-foreground">* Champs obligatoires</p>
           <Button type="submit">Enregistrer les paramètres</Button>
@@ -292,4 +297,66 @@ function readFileAsDataUrl(file: File) {
 
 function getErrorMessage(caught: unknown) {
   return caught instanceof Error ? caught.message : String(caught);
+}
+
+function AISettingsSection() {
+  const { showToast } = useToast();
+  const [aiValues, setAiValues] = useState<AISettings>(() => loadAISettings());
+
+  function update<K extends keyof AISettings>(key: K, value: AISettings[K]) {
+    setAiValues((current) => ({ ...current, [key]: value }));
+  }
+
+  function handleSave() {
+    try {
+      saveAISettings(aiValues);
+      showToast({ title: "Paramètres IA enregistrés", type: "success" });
+    } catch (caught) {
+      showToast({ message: getErrorMessage(caught), title: "Erreur paramètres IA", type: "error" });
+    }
+  }
+
+  return (
+    <SettingsSection title="Intelligence artificielle">
+      <div className="grid gap-4 md:grid-cols-2">
+        <CheckboxField
+          checked={aiValues.enabled}
+          label="Activer Prévisions IA"
+          onChange={(event) => update("enabled", event.currentTarget.checked)}
+        />
+        <CheckboxField
+          checked={aiValues.autoTrain}
+          label="Réentraîner automatiquement chaque semaine"
+          onChange={(event) => update("autoTrain", event.currentTarget.checked)}
+        />
+        <Field label="Chemin Python (optionnel)">
+          <Input
+            onChange={(event) => update("pythonPath", event.target.value)}
+            placeholder="python3 ou C:/Python311/python.exe"
+            value={aiValues.pythonPath}
+          />
+        </Field>
+        <Field label="Réservations minimum pour entraîner">
+          <Input
+            min="5"
+            onChange={(event) => update("minReservations", Number(event.target.value) || 0)}
+            type="number"
+            value={aiValues.minReservations}
+          />
+        </Field>
+        <Field label="Dossier local des modèles">
+          <Input
+            onChange={(event) => update("modelPath", event.target.value)}
+            placeholder="ml/models"
+            value={aiValues.modelPath}
+          />
+        </Field>
+      </div>
+      <div className="mt-4 flex justify-end">
+        <Button onClick={handleSave} type="button" variant="outline">
+          Enregistrer les paramètres IA
+        </Button>
+      </div>
+    </SettingsSection>
+  );
 }

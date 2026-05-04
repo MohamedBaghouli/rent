@@ -23,7 +23,7 @@ export function App() {
       <ToastProvider>
         <div className="min-h-screen overflow-hidden bg-background">
           <Sidebar collapsed={sidebarCollapsed} />
-          <div className={`flex h-screen min-w-0 flex-col transition-smooth ${sidebarCollapsed ? "md:pl-16" : "md:pl-64"}`}>
+          <div className={`flex h-screen min-w-0 flex-col transition-smooth ${sidebarCollapsed ? "md:pl-16" : "md:pl-52"}`}>
             <Header onToggleSidebar={() => setSidebarCollapsed((current) => !current)} />
             <main className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-6">
               <PageTransition>

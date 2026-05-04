@@ -9,11 +9,11 @@ const themeStorageKey = "rentaldesk:theme";
 
 export function Header({ onToggleSidebar }: { onToggleSidebar: () => void }) {
   return (
-    <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center justify-between border-b border-border bg-white px-4 dark:bg-slate-900 md:px-3 md:pr-6">
-      <div className="flex min-w-0 items-center gap-3">
+    <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center justify-between border-b border-border bg-white px-2 dark:bg-slate-900 md:px-2 md:pr-6">
+      <div className="flex min-w-0 items-center gap-1">
         <button
           aria-label="Réduire ou ouvrir le menu"
-          className="flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-smooth hover:bg-muted hover:text-foreground"
+          className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-smooth hover:bg-muted hover:text-foreground"
           onClick={onToggleSidebar}
           type="button"
         >
