@@ -157,7 +157,7 @@ export function AIForecastPage() {
 
       <p className="mb-6 max-w-3xl text-sm text-muted-foreground">
         Analyse locale et prédictions intelligentes de l'activité de votre agence. Tous les calculs
-        sont exécutés sur votre machine — aucune donnée n'est envoyée sur Internet.
+        sont exécutés sur votre machine - aucune donnée n'est envoyée sur Internet.
       </p>
 
       <ModelStatusCard
@@ -212,7 +212,7 @@ function ModelStatusCard({
           <div>
             <p className="text-base font-semibold text-foreground">
               {loading
-                ? "Vérification du modèle…"
+                ? "Vérification du modèle..."
                 : status?.trained
                 ? "Modèle entraîné"
                 : "Modèle non entraîné"}
@@ -247,14 +247,14 @@ function ModelStatusCard({
               forecast
                 ? `${Math.round(forecast.modelConfidence * 100)}%`
                 : status?.trained
-                ? "—"
-                : "—"
+                ? "-"
+                : "-"
             }
           />
           <StatusPill
             icon={<CalendarRange className="h-4 w-4" />}
             label="Période"
-            value={forecast ? forecast.dataPeriod : "—"}
+            value={forecast ? forecast.dataPeriod : "-"}
           />
         </div>
       </div>
@@ -395,7 +395,7 @@ function RevenueChartCard({
           <div
             className="flex-1 flex flex-col items-center justify-end gap-1"
             key={`${point.type}-${point.date}`}
-            title={`${point.date} — ${formatMoney(point.value)}`}
+            title={`${point.date} - ${formatMoney(point.value)}`}
           >
             <div
               className={`w-full rounded-t-sm ${
@@ -572,8 +572,8 @@ function PendingHint({ hasStatus, trained }: { hasStatus: boolean; trained: bool
         </p>
         <p>
           {trained
-            ? "Cliquez sur « Lancer la prédiction » pour générer les prévisions à partir du modèle entraîné."
-            : "Cliquez sur « Réentraîner le modèle » pour entraîner les modèles à partir des données locales."}
+            ? "Cliquez sur \"Lancer la prédiction\" pour générer les prévisions à partir du modèle entraîné."
+            : "Cliquez sur \"Réentraîner le modèle\" pour entraîner les modèles à partir des données locales."}
         </p>
         {!hasStatus && (
           <p className="text-xs text-orange-600 dark:text-orange-400">
@@ -596,7 +596,7 @@ function shortWeekday(isoDate: string) {
 }
 
 function formatDateTime(value: string | null | undefined) {
-  if (!value) return "—";
+  if (!value) return "-";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat("fr-FR", {

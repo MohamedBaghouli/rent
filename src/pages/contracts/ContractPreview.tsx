@@ -1,13 +1,24 @@
 import { useEffect, useMemo, useState } from "react";
-import type { ColumnDef } from "@tanstack/react-table";
-import { Download, Eye, Printer } from "lucide-react";
+import { Link } from "react-router-dom";
+import {
+  CalendarDays,
+  Car as CarIcon,
+  CheckCircle2,
+  Clock,
+  Download,
+  Eye,
+  FileText,
+  Pencil,
+  Plus,
+  Printer,
+  RotateCcw,
+  Search,
+  XCircle,
+} from "lucide-react";
 import { PageHeader } from "@/app/layout";
-import { DataTable } from "@/components/DataTable";
-import { getStatusLabel, StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
-import { Card, CardTitle } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { ContractPDF } from "@/pages/contracts/ContractPDF";
 import { getCars } from "@/services/car.service";
 import { getClients } from "@/services/client.service";
@@ -19,19 +30,118 @@ import type { Contract, ContractStatus } from "@/types/contract";
 import type { Reservation } from "@/types/reservation";
 import { formatCarName, formatRegistrationNumber } from "@/utils/car";
 import { normalizeClientName } from "@/utils/client";
-import { formatDate, formatShortPeriod } from "@/utils/date";
+import { getRentalDays } from "@/utils/date";
 import { createContractPdf } from "@/utils/pdf";
 import { useToast } from "@/hooks/useToast";
+import { cn } from "@/lib/utils";
 
-type ContractRow = {
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type DisplayStatus = "GENERATED" | "PENDING" | "SIGNED" | "EXPIRED";
+
+interface ContractRow {
   car?: Car;
   client?: Client;
-  secondClient?: Client;
   contract: Contract;
+  displayStatus: DisplayStatus;
+  durationDays: number;
   reservation?: Reservation;
-};
+  secondClient?: Client;
+}
 
-const contractStatuses: Array<"ALL" | ContractStatus> = ["ALL", "GENERATED", "SIGNED", "CANCELLED"];
+const PAGE_SIZE_OPTIONS = [10, 25, 50];
+
+const AVATAR_COLORS = [
+  "bg-blue-500", "bg-violet-500", "bg-emerald-500", "bg-orange-500",
+  "bg-pink-500", "bg-teal-500", "bg-indigo-500", "bg-rose-500",
+];
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function computeDisplayStatus(contract: Contract, reservation?: Reservation): DisplayStatus {
+  if (contract.status === "SIGNED") return "SIGNED";
+  if (contract.status === "CANCELLED") return "EXPIRED";
+  const now = new Date();
+  if (!reservation) return "GENERATED";
+  if (new Date(reservation.endDate) < now) return "EXPIRED";
+  if (new Date(reservation.startDate) <= now) return "PENDING";
+  return "GENERATED";
+}
+
+function getDisplayStatusLabel(status: DisplayStatus) {
+  return { GENERATED: "Généré", PENDING: "En attente", SIGNED: "Signé", EXPIRED: "Expiré" }[status];
+}
+
+function getDisplayStatusStyle(status: DisplayStatus) {
+  return {
+    GENERATED: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
+    PENDING: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300",
+    SIGNED: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300",
+    EXPIRED: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
+  }[status];
+}
+
+function clientInitials(name: string) {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  return name.slice(0, 2).toUpperCase();
+}
+
+function avatarColor(id: number) {
+  return AVATAR_COLORS[id % AVATAR_COLORS.length];
+}
+
+function formatDateLine(value?: string | null): { date: string; time: string } {
+  if (!value) return { date: "-", time: "" };
+  const d = new Date(value);
+  const date = new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "short", year: "numeric" }).format(d);
+  const time = new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" }).format(d);
+  return { date, time };
+}
+
+function formatPeriodLines(reservation?: Reservation) {
+  if (!reservation) return { start: "-", end: "", duration: "" };
+  const fmt = (v: string) =>
+    new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(v));
+  const days = Math.max(1, getRentalDays(reservation.startDate, reservation.endDate));
+  return {
+    start: fmt(reservation.startDate),
+    end: fmt(reservation.endDate),
+    duration: `${days} jour${days > 1 ? "s" : ""}`,
+  };
+}
+
+function monthKey(iso: string) {
+  return iso.slice(0, 7);
+}
+
+function currentAndPrevMonthKeys() {
+  const now = new Date();
+  const cur = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const prev = now.getMonth() === 0
+    ? `${now.getFullYear() - 1}-12`
+    : `${now.getFullYear()}-${String(now.getMonth()).padStart(2, "0")}`;
+  return { cur, prev };
+}
+
+function trendLabel(cur: number, prev: number) {
+  if (prev === 0) return cur > 0 ? "+100%" : null;
+  const pct = Math.round(((cur - prev) / prev) * 100);
+  return `${pct >= 0 ? "+" : ""}${pct}%`;
+}
+
+function searchMatch(row: ContractRow, query: string) {
+  if (!query) return true;
+  const q = query.toLowerCase();
+  return (
+    row.contract.contractNumber.toLowerCase().includes(q) ||
+    (row.client ? normalizeClientName(row.client.fullName).toLowerCase().includes(q) : false) ||
+    (row.car ? `${row.car.brand} ${row.car.model}`.toLowerCase().includes(q) : false) ||
+    (row.car ? row.car.registrationNumber.toLowerCase().includes(q) : false)
+  );
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
 
 export function ContractPreview() {
   const [contracts, setContracts] = useState<Contract[]>([]);
@@ -39,201 +149,515 @@ export function ContractPreview() {
   const [clients, setClients] = useState<Client[]>([]);
   const [cars, setCars] = useState<Car[]>([]);
   const [selected, setSelected] = useState<Contract | null>(null);
-  const [statusFilter, setStatusFilter] = useState<"ALL" | ContractStatus>("ALL");
-  const [dateFilter, setDateFilter] = useState("");
-  const [clientFilter, setClientFilter] = useState<number>(0);
   const { showToast } = useToast();
+
+  // Filters
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"ALL" | DisplayStatus>("ALL");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [carFilter, setCarFilter] = useState<number>(0);
+
+  // Pagination
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   useEffect(() => {
     void Promise.all([getContracts(), getReservations(), getClients(), getCars()]).then(
-      ([contractsData, reservationsData, clientsData, carsData]) => {
-        setContracts(contractsData);
-        setReservations(reservationsData);
-        setClients(clientsData);
-        setCars(carsData);
-      },
+      ([c, r, cl, ca]) => { setContracts(c); setReservations(r); setClients(cl); setCars(ca); },
     );
   }, []);
 
-  const reservationMap = useMemo(() => new Map(reservations.map((reservation) => [reservation.id, reservation])), [reservations]);
-  const clientMap = useMemo(() => new Map(clients.map((client) => [client.id, client])), [clients]);
-  const carMap = useMemo(() => new Map(cars.map((car) => [car.id, car])), [cars]);
+  const reservationMap = useMemo(() => new Map(reservations.map((r) => [r.id, r])), [reservations]);
+  const clientMap = useMemo(() => new Map(clients.map((c) => [c.id, c])), [clients]);
+  const carMap = useMemo(() => new Map(cars.map((c) => [c.id, c])), [cars]);
 
-  const rows = useMemo(
-    () =>
-      contracts.map((contract): ContractRow => {
-        const reservation = reservationMap.get(contract.reservationId);
+  const rows = useMemo<ContractRow[]>(() =>
+    contracts.map((contract) => {
+      const reservation = reservationMap.get(contract.reservationId);
+      const client = reservation ? clientMap.get(reservation.clientId) : undefined;
+      const car = reservation ? carMap.get(reservation.carId) : undefined;
+      const secondClient = reservation?.secondClientId ? clientMap.get(reservation.secondClientId) : undefined;
+      const displayStatus = computeDisplayStatus(contract, reservation);
+      const durationDays = reservation ? Math.max(1, getRentalDays(reservation.startDate, reservation.endDate)) : 0;
+      return { car, client, contract, displayStatus, durationDays, reservation, secondClient };
+    }),
+  [carMap, clientMap, contracts, reservationMap]);
 
-        return {
-          car: reservation ? carMap.get(reservation.carId) : undefined,
-          client: reservation ? clientMap.get(reservation.clientId) : undefined,
-          secondClient: reservation?.secondClientId ? clientMap.get(reservation.secondClientId) : undefined,
-          contract,
-          reservation,
-        };
-      }),
-    [carMap, clientMap, contracts, reservationMap],
-  );
+  // Stats
+  const { cur: curMonth, prev: prevMonth } = currentAndPrevMonthKeys();
+  const stats = useMemo(() => {
+    const forMonth = (mk: string) => rows.filter((r) => monthKey(r.contract.generatedAt) === mk);
+    const cur = forMonth(curMonth);
+    const prev = forMonth(prevMonth);
+    const count = (rows: ContractRow[], ds: DisplayStatus) => rows.filter((r) => r.displayStatus === ds).length;
+    return {
+      total: { cur: rows.length, prev: prev.length, curMonth: cur.length, prevMonth: prev.length },
+      signed: { cur: count(rows, "SIGNED"), prev: count(forMonth(prevMonth), "SIGNED") },
+      pending: { cur: count(rows, "PENDING") + count(rows, "GENERATED"), prev: count(forMonth(prevMonth), "PENDING") + count(forMonth(prevMonth), "GENERATED") },
+      expired: { cur: count(rows, "EXPIRED"), prev: count(forMonth(prevMonth), "EXPIRED") },
+    };
+  }, [rows, curMonth, prevMonth]);
 
-  const filteredRows = useMemo(
-    () =>
-      rows.filter((row) => {
-        const matchesStatus = statusFilter === "ALL" || row.contract.status === statusFilter;
-        const matchesDate = !dateFilter || row.contract.generatedAt.slice(0, 10) === dateFilter;
-        const matchesClient =
-          clientFilter === 0 || row.reservation?.clientId === clientFilter || row.reservation?.secondClientId === clientFilter;
+  // Filtered rows
+  const filteredRows = useMemo(() =>
+    rows.filter((row) => {
+      if (!searchMatch(row, search)) return false;
+      if (statusFilter !== "ALL" && row.displayStatus !== statusFilter) return false;
+      if (dateFrom && row.contract.generatedAt.slice(0, 10) < dateFrom) return false;
+      if (dateTo && row.contract.generatedAt.slice(0, 10) > dateTo) return false;
+      if (carFilter !== 0 && row.reservation?.carId !== carFilter) return false;
+      return true;
+    }),
+  [rows, search, statusFilter, dateFrom, dateTo, carFilter]);
 
-        return matchesStatus && matchesDate && matchesClient;
-      }),
-    [clientFilter, dateFilter, rows, statusFilter],
-  );
+  // Paginated rows
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const paginatedRows = filteredRows.slice((safePage - 1) * pageSize, safePage * pageSize);
 
-  const columns: ColumnDef<ContractRow>[] = [
-    { header: "N° Contrat", cell: ({ row }) => row.original.contract.contractNumber },
-    { header: "Client", cell: ({ row }) => <ClientCell client={row.original.client} secondClient={row.original.secondClient} /> },
-    { header: "Voiture", cell: ({ row }) => formatCar(row.original.car) },
-    { header: "Période", cell: ({ row }) => formatPeriod(row.original.reservation) },
-    { header: "Statut", cell: ({ row }) => <StatusBadge status={row.original.contract.status} /> },
-    { header: "Généré le", cell: ({ row }) => formatDateTime(row.original.contract.generatedAt) },
-    { header: "Signature", cell: ({ row }) => formatSignature(row.original.contract) },
-    {
-      header: "Actions",
-      cell: ({ row }) => (
-        <div className="flex gap-1">
-          <Button aria-label="Voir contrat" onClick={() => setSelected(row.original.contract)} size="icon" title="Voir contrat" variant="ghost">
-            <Eye className="h-4 w-4" />
-          </Button>
-          <Button aria-label="Télécharger" onClick={() => downloadContract(row.original)} size="icon" title="Télécharger" variant="ghost">
-            <Download className="h-4 w-4" />
-          </Button>
-          <Button aria-label="Imprimer" onClick={() => window.print()} size="icon" title="Imprimer" variant="ghost">
-            <Printer className="h-4 w-4" />
-          </Button>
-        </div>
-      ),
-    },
-  ];
+  function resetFilters() {
+    setSearch(""); setStatusFilter("ALL"); setDateFrom(""); setDateTo(""); setCarFilter(0); setPage(1);
+  }
 
   async function downloadContract(row: ContractRow) {
     try {
       const bytes = await createContractPdf(row.contract, {
-        car: row.car,
-        client: row.client,
-        reservation: row.reservation,
-        secondClient: row.secondClient,
+        car: row.car, client: row.client, reservation: row.reservation, secondClient: row.secondClient,
       });
-      const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-      const blob = new Blob([arrayBuffer], { type: "application/pdf" });
+      const blob = new Blob([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `${row.contract.contractNumber}.pdf`;
-      link.click();
+      const a = document.createElement("a");
+      a.href = url; a.download = `${row.contract.contractNumber}.pdf`; a.click();
       URL.revokeObjectURL(url);
       showToast({ title: "Contrat téléchargé", type: "success" });
-    } catch (caught) {
-      showToast({ message: getErrorMessage(caught), title: "Erreur contrat", type: "error" });
+    } catch (error) {
+      showToast({ message: getErrorMessage(error), title: "Erreur contrat", type: "error" });
     }
   }
 
-  const reservation = selected ? reservationMap.get(selected.reservationId) : undefined;
-  const client = reservation ? clientMap.get(reservation.clientId) : undefined;
-  const secondClient = reservation?.secondClientId ? clientMap.get(reservation.secondClientId) : undefined;
-  const car = reservation ? carMap.get(reservation.carId) : undefined;
+  const dialogReservation = selected ? reservationMap.get(selected.reservationId) : undefined;
+  const dialogClient = dialogReservation ? clientMap.get(dialogReservation.clientId) : undefined;
+  const dialogSecondClient = dialogReservation?.secondClientId ? clientMap.get(dialogReservation.secondClientId) : undefined;
+  const dialogCar = dialogReservation ? carMap.get(dialogReservation.carId) : undefined;
 
   return (
     <>
-      <PageHeader title="Contrats" />
-      <Card className="mb-4">
-        <CardTitle>Numérotation</CardTitle>
-        <p className="mt-2 text-sm text-muted-foreground">Format : CNT-2026-0001</p>
-        <p className="text-sm text-muted-foreground">Les contrats sont générés automatiquement après chaque réservation.</p>
-      </Card>
+      <PageHeader title="Contrats">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="hidden text-sm text-muted-foreground md:block">
+            Gérez et consultez tous vos contrats de location
+          </p>
+          <Button type="button" variant="outline" onClick={() => showToast({ title: "Export en cours...", type: "success" })}>
+            <Download className="h-4 w-4" />
+            Exporter PDF
+          </Button>
+          <Button asChild type="button">
+            <Link to="/reservations">
+              <Plus className="h-4 w-4" />
+              Nouveau contrat
+            </Link>
+          </Button>
+        </div>
+      </PageHeader>
 
-      <div className="mb-4 grid gap-3 md:grid-cols-[220px_180px_minmax(240px,1fr)]">
-        <select
-          className="h-10 rounded-md border border-input bg-white px-3 text-sm"
-          onChange={(event) => setStatusFilter(event.target.value as "ALL" | ContractStatus)}
-          value={statusFilter}
-        >
-          {contractStatuses.map((status) => (
-            <option key={status} value={status}>
-              {status === "ALL" ? "Tous les statuts" : getStatusLabel(status)}
-            </option>
-          ))}
-        </select>
-        <Input onChange={(event) => setDateFilter(event.target.value)} type="date" value={dateFilter} />
-        <select
-          className="h-10 rounded-md border border-input bg-white px-3 text-sm"
-          onChange={(event) => setClientFilter(Number(event.target.value))}
-          value={clientFilter}
-        >
-          <option value={0}>Tous les clients</option>
-          {clients.map((client) => (
-            <option key={client.id} value={client.id}>
-              {normalizeClientName(client.fullName)}
-            </option>
-          ))}
-        </select>
+      {/* Stats cards */}
+      <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard
+          color="blue"
+          icon={<FileText className="h-5 w-5" />}
+          label="Total contrats"
+          sub={`Ce mois ${trendLabel(stats.total.curMonth, stats.total.prevMonth) ?? ""}`}
+          subPositive={stats.total.curMonth >= stats.total.prevMonth}
+          value={rows.length}
+        />
+        <StatCard
+          color="emerald"
+          icon={<CheckCircle2 className="h-5 w-5" />}
+          label="Contrats signés"
+          sub={`Ce mois ${trendLabel(stats.signed.cur, stats.signed.prev) ?? ""}`}
+          subPositive={stats.signed.cur >= stats.signed.prev}
+          value={stats.signed.cur}
+        />
+        <StatCard
+          color="orange"
+          icon={<Clock className="h-5 w-5" />}
+          label="En attente"
+          sub={`Ce mois ${trendLabel(stats.pending.cur, stats.pending.prev) ?? ""}`}
+          subPositive={false}
+          value={stats.pending.cur}
+        />
+        <StatCard
+          color="red"
+          icon={<XCircle className="h-5 w-5" />}
+          label="Expirés"
+          sub={`Ce mois ${trendLabel(stats.expired.cur, stats.expired.prev) ?? ""}`}
+          subPositive={false}
+          value={stats.expired.cur}
+        />
       </div>
 
-      <DataTable columns={columns} data={filteredRows} />
+      {/* Filter bar */}
+      <div className="mb-5 flex flex-wrap items-end gap-2">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <input
+            className="h-9 w-64 rounded-md border border-border bg-white pl-9 pr-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring dark:bg-slate-900"
+            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+            placeholder="Rechercher (client, voiture, n° contrat...)"
+            type="text"
+            value={search}
+          />
+        </div>
 
-      <Dialog onOpenChange={(value) => !value && setSelected(null)} open={Boolean(selected)}>
+        <select
+          className="h-9 rounded-md border border-border bg-white px-3 text-sm dark:bg-slate-900"
+          onChange={(e) => { setStatusFilter(e.target.value as "ALL" | DisplayStatus); setPage(1); }}
+          value={statusFilter}
+        >
+          <option value="ALL">Tous les status</option>
+          <option value="GENERATED">Généré</option>
+          <option value="PENDING">En attente</option>
+          <option value="SIGNED">Signé</option>
+          <option value="EXPIRED">Expiré</option>
+        </select>
+
+        <div className="flex items-center gap-1">
+          <span className="text-sm text-muted-foreground">Date du</span>
+          <input
+            className="h-9 rounded-md border border-border bg-white px-3 text-sm dark:bg-slate-900"
+            onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
+            type="date"
+            value={dateFrom}
+          />
+        </div>
+
+        <div className="flex items-center gap-1">
+          <span className="text-sm text-muted-foreground">Date au</span>
+          <input
+            className="h-9 rounded-md border border-border bg-white px-3 text-sm dark:bg-slate-900"
+            onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
+            type="date"
+            value={dateTo}
+          />
+        </div>
+
+        <select
+          className="h-9 rounded-md border border-border bg-white px-3 text-sm dark:bg-slate-900"
+          onChange={(e) => { setCarFilter(Number(e.target.value)); setPage(1); }}
+          value={carFilter}
+        >
+          <option value={0}>Toutes les voitures</option>
+          {cars.map((car) => (
+            <option key={car.id} value={car.id}>
+              {formatCarName(car.brand, car.model)}
+            </option>
+          ))}
+        </select>
+
+        <Button onClick={resetFilters} size="sm" type="button" variant="ghost">
+          <RotateCcw className="h-3.5 w-3.5" />
+          Réinitialiser
+        </Button>
+      </div>
+
+      {/* Table */}
+      <Card className="overflow-hidden p-0 dark:bg-slate-900 dark:border-slate-800">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border bg-slate-50 dark:bg-slate-950">
+                {["N° CONTRAT", "CLIENT", "VOITURE", "PÉRIODE", "STATUT", "GÉNÉRÉ LE", "SIGNATURE", "ACTIONS"].map((h) => (
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground" key={h}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {paginatedRows.length === 0 ? (
+                <tr>
+                  <td className="px-4 py-10 text-center text-sm text-muted-foreground" colSpan={8}>
+                    Aucun contrat trouvé.
+                  </td>
+                </tr>
+              ) : (
+                paginatedRows.map((row) => (
+                  <ContractTableRow
+                    key={row.contract.id}
+                    onDownload={() => void downloadContract(row)}
+                    onPrint={() => window.print()}
+                    onView={() => setSelected(row.contract)}
+                    row={row}
+                  />
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Pagination */}
+        <div className="flex items-center justify-between gap-4 border-t border-border px-4 py-3">
+          <span className="text-sm text-muted-foreground">
+            Affichage de {filteredRows.length === 0 ? 0 : (safePage - 1) * pageSize + 1} à{" "}
+            {Math.min(safePage * pageSize, filteredRows.length)} sur {filteredRows.length} contrats
+          </span>
+
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1">
+              <button
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition hover:bg-muted disabled:opacity-40"
+                disabled={safePage <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                type="button"
+              >
+                {"<"}
+              </button>
+              {Array.from({ length: totalPages }, (_, i) => i + 1)
+                .filter((p) => p === 1 || p === totalPages || Math.abs(p - safePage) <= 1)
+                .reduce<(number | "...")[]>((acc, p, i, arr) => {
+                  if (i > 0 && p - (arr[i - 1] as number) > 1) acc.push("...");
+                  acc.push(p);
+                  return acc;
+                }, [])
+                .map((item, i) =>
+                  item === "..." ? (
+                    <span className="px-1 text-muted-foreground" key={`ellipsis-${i}`}>...</span>
+                  ) : (
+                    <button
+                      className={cn(
+                        "flex h-8 w-8 items-center justify-center rounded-md border text-sm font-medium transition",
+                        safePage === item
+                          ? "border-primary bg-primary text-primary-foreground"
+                          : "border-border text-muted-foreground hover:bg-muted",
+                      )}
+                      key={item}
+                      onClick={() => setPage(item as number)}
+                      type="button"
+                    >
+                      {item}
+                    </button>
+                  ),
+                )}
+              <button
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition hover:bg-muted disabled:opacity-40"
+                disabled={safePage >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                type="button"
+              >
+                {">"}
+              </button>
+            </div>
+
+            <select
+              className="h-8 rounded-md border border-border bg-white px-2 text-sm dark:bg-slate-900"
+              onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
+              value={pageSize}
+            >
+              {PAGE_SIZE_OPTIONS.map((size) => (
+                <option key={size} value={size}>{size} / page</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </Card>
+
+      {/* Preview dialog */}
+      <Dialog onOpenChange={(v) => !v && setSelected(null)} open={Boolean(selected)}>
         <DialogContent className="max-h-[90vh] overflow-auto">
           <DialogHeader>
             <DialogTitle>Prévisualisation contrat</DialogTitle>
           </DialogHeader>
-          {selected && <ContractPDF car={car} client={client} contract={selected} reservation={reservation} secondClient={secondClient} />}
+          {selected && (
+            <ContractPDF
+              car={dialogCar}
+              client={dialogClient}
+              contract={selected}
+              reservation={dialogReservation}
+              secondClient={dialogSecondClient}
+            />
+          )}
         </DialogContent>
       </Dialog>
     </>
   );
 }
 
-function formatCar(car?: Car) {
-  return car ? `${formatCarName(car.brand, car.model)} (${formatRegistrationNumber(car.registrationNumber)})` : "-";
-}
+// ─── Stat card ────────────────────────────────────────────────────────────────
 
-function formatPeriod(reservation?: Reservation) {
-  if (!reservation) return "-";
-  return formatShortPeriod(reservation.startDate, reservation.endDate);
-}
-
-function formatDateTime(value?: string | null) {
-  if (!value) return "-";
-
-  return new Intl.DateTimeFormat("fr-FR", {
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    month: "short",
-    year: "numeric",
-  }).format(new Date(value));
-}
-
-function formatSignature(contract: Contract) {
-  if (contract.status === "SIGNED" && contract.signedAt) {
-    return `Signé le : ${formatDate(contract.signedAt)}`;
-  }
-
-  if (contract.status === "SIGNED") return "Signé";
-  if (contract.status === "CANCELLED") return "Annulé";
-
-  return "En attente";
-}
-
-function ClientCell({ client, secondClient }: { client?: Client; secondClient?: Client }) {
-  if (!client) return <span>-</span>;
+function StatCard({
+  color,
+  icon,
+  label,
+  sub,
+  subPositive,
+  value,
+}: {
+  color: "blue" | "emerald" | "orange" | "red";
+  icon: React.ReactNode;
+  label: string;
+  sub: string;
+  subPositive: boolean;
+  value: number;
+}) {
+  const iconStyle = {
+    blue: "bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300",
+    emerald: "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-300",
+    orange: "bg-orange-100 text-orange-600 dark:bg-orange-900/40 dark:text-orange-300",
+    red: "bg-red-100 text-red-600 dark:bg-red-900/40 dark:text-red-300",
+  }[color];
 
   return (
-    <div>
-      <p>{normalizeClientName(client.fullName)}</p>
-      <p className="text-xs text-muted-foreground">{client.cin ? `CIN : ${client.cin}` : client.passportNumber ? `Passeport : ${client.passportNumber}` : "Pièce : -"}</p>
-      {secondClient && (
-        <p className="text-xs text-muted-foreground">2e conducteur : {normalizeClientName(secondClient.fullName)}</p>
-      )}
-    </div>
+    <Card className="dark:bg-slate-900 dark:border-slate-800">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm text-muted-foreground">{label}</p>
+          <p className="mt-1 text-3xl font-bold text-foreground">{value}</p>
+          <p className={cn("mt-1 text-xs font-medium", subPositive ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
+            {sub}
+          </p>
+        </div>
+        <div className={cn("flex h-11 w-11 items-center justify-center rounded-xl", iconStyle)}>
+          {icon}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+// ─── Table row ────────────────────────────────────────────────────────────────
+
+function ContractTableRow({
+  onDownload,
+  onPrint,
+  onView,
+  row,
+}: {
+  onDownload: () => void;
+  onPrint: () => void;
+  onView: () => void;
+  row: ContractRow;
+}) {
+  const period = formatPeriodLines(row.reservation);
+  const generated = formatDateLine(row.contract.generatedAt);
+  const signature = row.contract.status === "SIGNED" ? formatDateLine(row.contract.signedAt) : null;
+
+  return (
+    <tr className="border-b border-border last:border-0 transition hover:bg-slate-50/60 dark:hover:bg-slate-950/40">
+      {/* N° Contrat */}
+      <td className="px-4 py-3">
+        <span className="font-mono text-sm font-semibold text-foreground">{row.contract.contractNumber}</span>
+      </td>
+
+      {/* Client */}
+      <td className="px-4 py-3">
+        {row.client ? (
+          <div className="flex items-center gap-3">
+            <div className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white", avatarColor(row.client.id))}>
+              {clientInitials(normalizeClientName(row.client.fullName))}
+            </div>
+            <div>
+              <p className="font-semibold text-foreground">{normalizeClientName(row.client.fullName)}</p>
+              <p className="text-xs text-muted-foreground">
+                {row.client.cin ? `CIN : ${row.client.cin}` : row.client.passportNumber ? `Passeport : ${row.client.passportNumber}` : ""}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <span className="text-muted-foreground">-</span>
+        )}
+      </td>
+
+      {/* Voiture */}
+      <td className="px-4 py-3">
+        {row.car ? (
+          <div className="flex items-center gap-2">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-500 dark:bg-slate-800">
+              <CarIcon className="h-4 w-4" />
+            </div>
+            <div>
+              <p className="font-medium text-foreground">{formatCarName(row.car.brand, row.car.model)}</p>
+              <p className="text-xs text-muted-foreground">{formatRegistrationNumber(row.car.registrationNumber)}</p>
+            </div>
+          </div>
+        ) : (
+          <span className="text-muted-foreground">-</span>
+        )}
+      </td>
+
+      {/* Période */}
+      <td className="px-4 py-3">
+        {row.reservation ? (
+          <div className="text-sm">
+            <p className="text-foreground">{period.start} -</p>
+            <p className="text-foreground">{period.end}</p>
+            <p className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
+              <CalendarDays className="h-3 w-3" />
+              {period.duration}
+            </p>
+          </div>
+        ) : (
+          <span className="text-muted-foreground">-</span>
+        )}
+      </td>
+
+      {/* Statut */}
+      <td className="px-4 py-3">
+        <span className={cn("inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold", getDisplayStatusStyle(row.displayStatus))}>
+          {getDisplayStatusLabel(row.displayStatus)}
+        </span>
+      </td>
+
+      {/* Généré le */}
+      <td className="px-4 py-3">
+        <p className="text-sm text-foreground">{generated.date}</p>
+        {generated.time && <p className="text-xs text-muted-foreground">{generated.time}</p>}
+      </td>
+
+      {/* Signature */}
+      <td className="px-4 py-3">
+        {signature ? (
+          <>
+            <p className="text-sm text-foreground">{signature.date}</p>
+            {signature.time && <p className="text-xs text-muted-foreground">{signature.time}</p>}
+          </>
+        ) : (
+          <span className="text-muted-foreground">-</span>
+        )}
+      </td>
+
+      {/* Actions */}
+      <td className="px-4 py-3">
+        <div className="flex items-center gap-0.5">
+          <ActionBtn label="Voir contrat" onClick={onView}>
+            <Eye className="h-4 w-4" />
+          </ActionBtn>
+          <ActionBtn label="Télécharger" onClick={onDownload}>
+            <Download className="h-4 w-4" />
+          </ActionBtn>
+          <ActionBtn label="Imprimer" onClick={onPrint}>
+            <Printer className="h-4 w-4" />
+          </ActionBtn>
+          <ActionBtn label="Modifier" onClick={() => {}}>
+            <Pencil className="h-4 w-4" />
+          </ActionBtn>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function ActionBtn({ children, label, onClick }: { children: React.ReactNode; label: string; onClick: () => void }) {
+  return (
+    <button
+      aria-label={label}
+      className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground"
+      onClick={onClick}
+      title={label}
+      type="button"
+    >
+      {children}
+    </button>
   );
 }
 

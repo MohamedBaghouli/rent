@@ -1,11 +1,28 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, CircleUserRound, Menu, Moon, Sun } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Check, CircleUserRound, LogOut, Menu, Moon, Settings, Sun, User } from "lucide-react";
 import { NotificationBell } from "@/components/NotificationBell";
 import { cn } from "@/lib/utils";
 
 type ThemeMode = "light" | "dark";
 
 const themeStorageKey = "rentaldesk:theme";
+const settingsStorageKey = "rentaldesk:settings";
+
+function readUserInfo() {
+  if (typeof window === "undefined") return { agencyName: "", userName: "" };
+  try {
+    const stored = window.localStorage.getItem(settingsStorageKey);
+    if (!stored) return { agencyName: "", userName: "" };
+    const parsed = JSON.parse(stored) as { agencyName?: unknown; userName?: unknown };
+    return {
+      agencyName: typeof parsed.agencyName === "string" ? parsed.agencyName.trim() : "",
+      userName: typeof parsed.userName === "string" ? parsed.userName.trim() : "",
+    };
+  } catch {
+    return { agencyName: "", userName: "" };
+  }
+}
 
 export function Header({ onToggleSidebar }: { onToggleSidebar: () => void }) {
   return (
@@ -24,15 +41,99 @@ export function Header({ onToggleSidebar }: { onToggleSidebar: () => void }) {
       <div className="flex items-center gap-3">
         <NotificationBell />
         <ThemeMenu />
-        <button
-          aria-label="Profil utilisateur"
-          className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-primary transition-smooth hover:bg-blue-100 dark:bg-slate-800 dark:text-blue-300 dark:hover:bg-slate-700"
-          type="button"
-        >
-          <CircleUserRound className="h-5 w-5" />
-        </button>
+        <ProfileMenu />
       </div>
     </header>
+  );
+}
+
+function ProfileMenu() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const info = readUserInfo();
+
+  const displayName = info.userName || "Ahmed Mahjoub";
+  const agencyName = info.agencyName || "Location Auto bizerte";
+  const initials = displayName
+    .trim()
+    .split(/\s+/)
+    .map((w) => w[0])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (ref.current && !ref.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+    if (open) document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        aria-label="Profil utilisateur"
+        className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-primary transition-smooth hover:bg-blue-100 dark:bg-slate-800 dark:text-blue-300 dark:hover:bg-slate-700"
+        onClick={() => setOpen((v) => !v)}
+        type="button"
+      >
+        <CircleUserRound className="h-5 w-5" />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full z-50 mt-2 w-56 animate-fade-in rounded-xl border border-border bg-white shadow-xl dark:bg-slate-900 dark:border-slate-800">
+          {/* User info header */}
+          <div className="flex items-center gap-3 border-b border-border px-4 py-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-600 text-sm font-bold text-white">
+              {initials}
+            </div>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-foreground">{displayName}</p>
+              <p className="truncate text-xs text-muted-foreground">{agencyName}</p>
+            </div>
+          </div>
+
+          {/* Menu items */}
+          <div className="p-1">
+            <Link
+              className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-foreground transition-smooth hover:bg-muted"
+              onClick={() => setOpen(false)}
+              to="/settings"
+            >
+              <Settings className="h-4 w-4 text-muted-foreground" />
+              Paramètres
+            </Link>
+
+            <Link
+              className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-foreground transition-smooth hover:bg-muted"
+              onClick={() => setOpen(false)}
+              to="/settings"
+            >
+              <User className="h-4 w-4 text-muted-foreground" />
+              Mon profil
+            </Link>
+          </div>
+
+          {/* Disconnect */}
+          <div className="border-t border-border p-1">
+            <button
+              className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-red-600 transition-smooth hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
+              onClick={() => {
+                setOpen(false);
+                window.location.reload();
+              }}
+              type="button"
+            >
+              <LogOut className="h-4 w-4" />
+              Déconnecter
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -52,7 +153,6 @@ function ThemeMenu() {
         setOpen(false);
       }
     }
-
     if (open) document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [open]);

@@ -1,4 +1,6 @@
 import {
+  ArrowLeftRight,
+  BarChart3,
   Banknote,
   Brain,
   CalendarDays,
@@ -6,7 +8,6 @@ import {
   FileText,
   Gauge,
   LayoutDashboard,
-  Settings,
   UserRound,
 } from "lucide-react";
 
@@ -16,9 +17,10 @@ export const navigationItems = [
   { label: "Clients", path: "/clients", icon: UserRound },
   { label: "Réservations", path: "/reservations", icon: CalendarDays },
   { label: "Paiements", path: "/payments", icon: Banknote },
+  { label: "Rapport CA", path: "/rapport", icon: BarChart3 },
+  { label: "Mouvement", path: "/mouvement", icon: ArrowLeftRight },
   { label: "Prévisions IA", path: "/ai-forecast", icon: Brain },
   { label: "Contrats", path: "/contracts", icon: FileText },
-  { label: "Paramètres", path: "/settings", icon: Settings },
 ];
 
 export const appName = "RentalDesk";

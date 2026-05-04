@@ -5,8 +5,10 @@ import { CarsPage } from "@/pages/cars/CarsPage";
 import { ClientsPage } from "@/pages/clients/ClientsPage";
 import { ContractPreview } from "@/pages/contracts/ContractPreview";
 import { DashboardPage } from "@/pages/dashboard/DashboardPage";
+import { MouvementPage } from "@/pages/mouvement/MouvementPage";
 import { PaymentDetailsPage } from "@/pages/payments/PaymentDetailsPage";
 import { PaymentsPage } from "@/pages/payments/PaymentsPage";
+import { RapportPage } from "@/pages/rapport/RapportPage";
 import { ReservationsPage } from "@/pages/reservations/ReservationsPage";
 import { SettingsPage } from "@/pages/settings/SettingsPage";
 
@@ -22,6 +24,8 @@ export const router = createHashRouter([
       { path: "payments", element: <PaymentsPage /> },
       { path: "payments/detail", element: <PaymentDetailsPage /> },
       { path: "payments/:paymentId", element: <PaymentDetailsPage /> },
+      { path: "rapport", element: <RapportPage /> },
+      { path: "mouvement", element: <MouvementPage /> },
       { path: "ai-forecast", element: <AIForecastPage /> },
       { path: "contracts", element: <ContractPreview /> },
       { path: "settings", element: <SettingsPage /> },
