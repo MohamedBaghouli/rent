@@ -3,42 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 type CollectionCommand = "cars" | "clients" | "reservations" | "payments" | "contracts";
 
 const defaultCollections: Record<CollectionCommand, unknown[]> = {
-  cars: [
-    {
-      id: 1,
-      brand: "Volkswagen",
-      model: "Polo",
-      registrationNumber: "204 TUN 8451",
-      year: 2022,
-      fuelType: "Essence",
-      transmission: "Manuelle",
-      dailyPrice: 95,
-      status: "AVAILABLE",
-      mileage: 42000,
-      imageUrl: null,
-      insuranceExpiryDate: new Date().toISOString(),
-      technicalVisitExpiryDate: new Date().toISOString(),
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    },
-  ],
-  clients: [
-    {
-      id: 1,
-      fullName: "Sami Ben Ali",
-      phone: "+216 22 000 000",
-      email: "sami@example.com",
-      cin: "12345678",
-      passportNumber: null,
-      drivingLicense: "TN/45896",
-      birthPlace: "Tunis",
-      nationality: "Tunisienne",
-      address: "Tunis",
-      isActive: true,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    },
-  ],
+  cars: [],
+  clients: [],
   reservations: [],
   payments: [],
   contracts: [],
@@ -84,6 +50,9 @@ function invokeFallback<T>(command: string, args?: Record<string, unknown>): T {
     const now = new Date().toISOString();
     if (command === "create_reservation") {
       validateFallbackReservation(args?.data as Record<string, unknown>);
+    }
+    if (command === "create_payment") {
+      validateFallbackPayment(args?.data as Record<string, unknown>);
     }
     if (command === "create_client") {
       validateFallbackClient(args?.data as Record<string, unknown>);
@@ -320,6 +289,60 @@ function validateFallbackClient(data: Record<string, unknown>, currentClientId?:
     const exists = clients.some((client) => Number(client.id) !== currentClientId && String(client[field] ?? "").trim() === value);
     if (exists) throw new Error(message);
   }
+}
+
+function validateFallbackPayment(data: Record<string, unknown>) {
+  const reservationId = Number(data.reservationId);
+  const amount = Number(data.amount);
+  const type = String(data.type ?? "");
+
+  if (reservationId <= 0) throw new Error("Réservation obligatoire.");
+  if (!Number.isFinite(amount) || (type === "DEPOSIT_REFUND" ? amount < 0 : amount <= 0)) {
+    throw new Error(type === "DEPOSIT_REFUND" ? "Le montant à rembourser doit être supérieur ou égal à 0." : "Le montant doit être supérieur à 0.");
+  }
+
+  const reservation = readCollection<Record<string, unknown>>("reservations").find((item) => Number(item.id) === reservationId);
+  if (!reservation) throw new Error("Réservation introuvable.");
+
+  const reservationPayments = readCollection<Record<string, unknown>>("payments").filter(
+    (payment) => Number(payment.reservationId) === reservationId,
+  );
+  const rentalPaid = sumFallbackPayments(reservationPayments, "RENTAL_PAYMENT");
+  const rentalRemaining = Math.max(0, Number(reservation.totalPrice ?? 0) - rentalPaid);
+  const depositPaid = sumFallbackPayments(reservationPayments, "DEPOSIT");
+  const depositRefunded = sumFallbackPayments(reservationPayments, "DEPOSIT_REFUND");
+  const depositRefundDecided = reservationPayments.some((payment) => payment.type === "DEPOSIT_REFUND");
+  const depositExpected = Number(reservation.depositAmount ?? 0);
+  const refundableDeposit = depositPaid > 0 ? (depositExpected > 0 ? Math.min(depositPaid, depositExpected) : depositPaid) : 0;
+  const depositAvailable = Math.max(0, refundableDeposit - depositRefunded);
+
+  if (type === "RENTAL_PAYMENT" && amount > rentalRemaining) {
+    throw new Error(`Le paiement location ne peut pas dépasser ${rentalRemaining} DT.`);
+  }
+  if (type === "RENTAL_PAYMENT" && rentalRemaining <= 0) {
+    throw new Error("La location est déjà totalement payée.");
+  }
+
+  if (type === "DEPOSIT") {
+    if (depositExpected <= 0) throw new Error("Aucune caution n'est prévue pour cette réservation.");
+    if (depositPaid > 0) throw new Error("La caution est déjà encaissée pour cette réservation.");
+    if (!amountsAreEqual(amount, depositExpected)) {
+      throw new Error(`La caution doit être payée en une seule fois : ${depositExpected} DT.`);
+    }
+  }
+
+  if (type === "DEPOSIT_REFUND") {
+    if (depositRefundDecided) throw new Error("Le remboursement de caution est déjà enregistré pour cette réservation.");
+    if (amount > depositAvailable) throw new Error(`Le remboursement ne peut pas dépasser ${depositAvailable} DT.`);
+  }
+}
+
+function sumFallbackPayments(payments: Record<string, unknown>[], type: string) {
+  return payments.filter((payment) => payment.type === type).reduce((sum, payment) => sum + Number(payment.amount ?? 0), 0);
+}
+
+function amountsAreEqual(first: number, second: number) {
+  return Math.abs(first - second) < 0.001;
 }
 
 function normalizeLegacyDateTime(value: string, boundary: "start" | "end") {

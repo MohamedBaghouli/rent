@@ -317,7 +317,7 @@ export function ReservationForm({
       <div>
         <Label>Prix/jour</Label>
         <Input
-          readOnly
+          min="0.001"
           step="0.001"
           type="number"
           {...register("dailyPrice", {
@@ -325,7 +325,7 @@ export function ReservationForm({
             validate: (value) => Number(value) > 0 || "Le prix/jour doit être supérieur à 0.",
           })}
         />
-        <p className="mt-1 text-xs text-muted-foreground">Prix/jour : {formatMoney(dailyPrice)} (auto)</p>
+        <p className="mt-1 text-xs text-muted-foreground">Prix proposé automatiquement, modifiable.</p>
         {errors.dailyPrice && <p className="mt-1 text-xs text-destructive">{errors.dailyPrice.message}</p>}
       </div>
 

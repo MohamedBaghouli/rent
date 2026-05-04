@@ -7,10 +7,13 @@ use std::{
 };
 
 const INIT_SQL: &str = include_str!("../../prisma/migrations/20260427213400_init/migration.sql");
-const MIGRATION_CLIENT_EXTRA: &str = include_str!("../../prisma/migrations/20260430000000_client_extra_fields/migration.sql");
-const MIGRATION_CAR_IMAGE_URL: &str = include_str!("../../prisma/migrations/20260501000000_car_image_url/migration.sql");
-const MIGRATION_CLIENT_BIRTHPLACE_NATIONALITY_UNIQUE: &str =
-    include_str!("../../prisma/migrations/20260501010000_client_birthplace_nationality_unique/migration.sql");
+const MIGRATION_CLIENT_EXTRA: &str =
+    include_str!("../../prisma/migrations/20260430000000_client_extra_fields/migration.sql");
+const MIGRATION_CAR_IMAGE_URL: &str =
+    include_str!("../../prisma/migrations/20260501000000_car_image_url/migration.sql");
+const MIGRATION_CLIENT_BIRTHPLACE_NATIONALITY_UNIQUE: &str = include_str!(
+    "../../prisma/migrations/20260501010000_client_birthplace_nationality_unique/migration.sql"
+);
 const MIGRATION_RESERVATION_SECOND_CLIENT: &str =
     include_str!("../../prisma/migrations/20260501020000_reservation_second_client/migration.sql");
 const MIGRATION_CLIENT_IS_ACTIVE: &str =
@@ -241,7 +244,9 @@ fn init_db() -> Result<Connection, String> {
     let has_birth_date: bool = connection
         .prepare("PRAGMA table_info(Client)")
         .and_then(|mut stmt| {
-            let cols: Result<Vec<String>, _> = stmt.query_map([], |row| row.get::<_, String>(1)).map(|iter| iter.flatten().collect());
+            let cols: Result<Vec<String>, _> = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .map(|iter| iter.flatten().collect());
             cols
         })
         .map(|cols| cols.iter().any(|c| c == "birthDate"))
@@ -256,7 +261,9 @@ fn init_db() -> Result<Connection, String> {
     let has_car_image_url: bool = connection
         .prepare("PRAGMA table_info(Car)")
         .and_then(|mut stmt| {
-            let cols: Result<Vec<String>, _> = stmt.query_map([], |row| row.get::<_, String>(1)).map(|iter| iter.flatten().collect());
+            let cols: Result<Vec<String>, _> = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .map(|iter| iter.flatten().collect());
             cols
         })
         .map(|cols| cols.iter().any(|c| c == "imageUrl"))
@@ -294,8 +301,9 @@ fn has_column(connection: &Connection, table: &str, column: &str) -> bool {
     connection
         .prepare(&sql)
         .and_then(|mut stmt| {
-            let cols: Result<Vec<String>, _> =
-                stmt.query_map([], |row| row.get::<_, String>(1)).map(|iter| iter.flatten().collect());
+            let cols: Result<Vec<String>, _> = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .map(|iter| iter.flatten().collect());
             cols
         })
         .map(|cols| cols.iter().any(|c| c == column))
@@ -708,7 +716,13 @@ fn create_reservation(
         return Err("Cette voiture n'est pas disponible.".to_string());
     }
 
-    if has_reservation_conflict(&connection, data.car_id, &data.start_date, &data.end_date, None)? {
+    if has_reservation_conflict(
+        &connection,
+        data.car_id,
+        &data.start_date,
+        &data.end_date,
+        None,
+    )? {
         return Err("Cette voiture est déjà réservée sur cette période.".to_string());
     }
 
@@ -775,7 +789,11 @@ fn update_reservation(
 ) -> Result<Reservation, String> {
     let connection = state.db.lock().map_err(|error| error.to_string())?;
     let current_status: String = connection
-        .query_row("SELECT status FROM Reservation WHERE id = ?1", params![id], |row| row.get(0))
+        .query_row(
+            "SELECT status FROM Reservation WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
         .map_err(|_| "Réservation introuvable".to_string())?;
 
     if current_status != "EN_ATTENTE" {
@@ -783,7 +801,11 @@ fn update_reservation(
     }
 
     let car_status: String = connection
-        .query_row("SELECT status FROM Car WHERE id = ?1", params![data.car_id], |row| row.get(0))
+        .query_row(
+            "SELECT status FROM Car WHERE id = ?1",
+            params![data.car_id],
+            |row| row.get(0),
+        )
         .map_err(|_| "Voiture introuvable".to_string())?;
 
     validate_reservation_data(&data)?;
@@ -796,7 +818,13 @@ fn update_reservation(
         return Err("Cette voiture n'est pas disponible.".to_string());
     }
 
-    if has_reservation_conflict(&connection, data.car_id, &data.start_date, &data.end_date, Some(id))? {
+    if has_reservation_conflict(
+        &connection,
+        data.car_id,
+        &data.start_date,
+        &data.end_date,
+        Some(id),
+    )? {
         return Err("Cette voiture est déjà réservée sur cette période.".to_string());
     }
 
@@ -933,6 +961,8 @@ fn create_payment(
     data: CreatePaymentDto,
 ) -> Result<Payment, String> {
     let connection = state.db.lock().map_err(|error| error.to_string())?;
+    validate_payment_data(&connection, &data)?;
+
     connection
         .execute(
             "INSERT INTO Payment (reservationId, amount, type, method, paymentDate, note, createdAt)
@@ -1050,8 +1080,10 @@ fn validate_reservation_data(data: &CreateReservationDto) -> Result<(), String> 
         return Err("Date et heure de retour obligatoires.".to_string());
     }
 
-    let start_minutes = parse_iso_minutes(&data.start_date).ok_or("Date de début invalide.".to_string())?;
-    let end_minutes = parse_iso_minutes(&data.end_date).ok_or("Date de fin invalide.".to_string())?;
+    let start_minutes =
+        parse_iso_minutes(&data.start_date).ok_or("Date de début invalide.".to_string())?;
+    let end_minutes =
+        parse_iso_minutes(&data.end_date).ok_or("Date de fin invalide.".to_string())?;
 
     if end_minutes - start_minutes < 24 * 60 {
         return Err("La durée minimale de location est de 24h.".to_string());
@@ -1068,7 +1100,110 @@ fn validate_reservation_data(data: &CreateReservationDto) -> Result<(), String> 
     Ok(())
 }
 
-fn ensure_client_active(connection: &Connection, client_id: i32, label: &str) -> Result<(), String> {
+fn validate_payment_data(connection: &Connection, data: &CreatePaymentDto) -> Result<(), String> {
+    if data.reservation_id <= 0 {
+        return Err("Réservation obligatoire.".to_string());
+    }
+
+    if data.amount < 0.0 || (data.payment_type != "DEPOSIT_REFUND" && data.amount <= 0.0) {
+        return Err(if data.payment_type == "DEPOSIT_REFUND" {
+            "Le montant à rembourser doit être supérieur ou égal à 0.".to_string()
+        } else {
+            "Le montant doit être supérieur à 0.".to_string()
+        });
+    }
+
+    let (total_price, deposit_amount): (f64, f64) = connection
+        .query_row(
+            "SELECT totalPrice, depositAmount FROM Reservation WHERE id = ?1",
+            params![data.reservation_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|_| "Réservation introuvable.".to_string())?;
+
+    let rental_paid = sum_payments(connection, data.reservation_id, "RENTAL_PAYMENT")?;
+    let rental_remaining = (total_price - rental_paid).max(0.0);
+    let deposit_paid = sum_payments(connection, data.reservation_id, "DEPOSIT")?;
+    let deposit_refunded = sum_payments(connection, data.reservation_id, "DEPOSIT_REFUND")?;
+    let deposit_refund_decided =
+        count_payments(connection, data.reservation_id, "DEPOSIT_REFUND")? > 0;
+    let refundable_deposit = if deposit_paid > 0.0 {
+        if deposit_amount > 0.0 {
+            deposit_paid.min(deposit_amount)
+        } else {
+            deposit_paid
+        }
+    } else {
+        0.0
+    };
+    let deposit_available = (refundable_deposit - deposit_refunded).max(0.0);
+
+    match data.payment_type.as_str() {
+        "RENTAL_PAYMENT" if data.amount > rental_remaining => Err(format!(
+            "Le paiement location ne peut pas dépasser {} DT.",
+            rental_remaining
+        )),
+        "RENTAL_PAYMENT" if rental_remaining <= 0.0 => {
+            Err("La location est déjà totalement payée.".to_string())
+        }
+        "DEPOSIT" if deposit_amount <= 0.0 => {
+            Err("Aucune caution n'est prévue pour cette réservation.".to_string())
+        }
+        "DEPOSIT" if deposit_paid > 0.0 => {
+            Err("La caution est déjà encaissée pour cette réservation.".to_string())
+        }
+        "DEPOSIT" if !amounts_are_equal(data.amount, deposit_amount) => Err(format!(
+            "La caution doit être payée en une seule fois : {} DT.",
+            deposit_amount
+        )),
+        "DEPOSIT_REFUND" if deposit_refund_decided => Err(
+            "Le remboursement de caution est déjà enregistré pour cette réservation.".to_string(),
+        ),
+        "DEPOSIT_REFUND" if data.amount > deposit_available => Err(format!(
+            "Le remboursement ne peut pas dépasser {} DT.",
+            deposit_available
+        )),
+        _ => Ok(()),
+    }
+}
+
+fn sum_payments(
+    connection: &Connection,
+    reservation_id: i32,
+    payment_type: &str,
+) -> Result<f64, String> {
+    connection
+        .query_row(
+            "SELECT COALESCE(SUM(amount), 0) FROM Payment WHERE reservationId = ?1 AND type = ?2",
+            params![reservation_id, payment_type],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())
+}
+
+fn count_payments(
+    connection: &Connection,
+    reservation_id: i32,
+    payment_type: &str,
+) -> Result<i64, String> {
+    connection
+        .query_row(
+            "SELECT COUNT(*) FROM Payment WHERE reservationId = ?1 AND type = ?2",
+            params![reservation_id, payment_type],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())
+}
+
+fn amounts_are_equal(first: f64, second: f64) -> bool {
+    (first - second).abs() < 0.001
+}
+
+fn ensure_client_active(
+    connection: &Connection,
+    client_id: i32,
+    label: &str,
+) -> Result<(), String> {
     let is_active: bool = connection
         .query_row(
             "SELECT isActive FROM Client WHERE id = ?1",
@@ -1110,7 +1245,11 @@ fn has_reservation_conflict(
 fn parse_iso_minutes(value: &str) -> Option<i64> {
     let value = value.trim();
     let date_part = value.get(0..10)?;
-    let time_part = if value.len() >= 16 { value.get(11..16).unwrap_or("00:00") } else { "00:00" };
+    let time_part = if value.len() >= 16 {
+        value.get(11..16).unwrap_or("00:00")
+    } else {
+        "00:00"
+    };
     let mut date = date_part.split('-');
     let year: i32 = date.next()?.parse().ok()?;
     let month: u32 = date.next()?.parse().ok()?;

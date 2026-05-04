@@ -23,6 +23,7 @@ type PaymentSummary = {
   depositExpected: number;
   depositCollected: number;
   depositRefunded: number;
+  depositRefundDecided: boolean;
   depositAvailable: number;
 };
 
@@ -32,6 +33,9 @@ type PaymentFormProps = {
   payments: Payment[];
   clients: Client[];
   cars: Car[];
+  initialReservationId?: number;
+  initialType?: PaymentType;
+  lockReservation?: boolean;
 };
 
 const selectClassName = "h-10 w-full rounded-md border border-input bg-white px-3 text-sm";
@@ -45,7 +49,16 @@ const buttonLabels: Record<PaymentType, string> = {
 
 const penaltyReasons = ["Retard", "Carburant manquant", "Dommage", "Kilométrage dépassé"];
 
-export function PaymentForm({ onSubmit, reservations, payments, clients, cars }: PaymentFormProps) {
+export function PaymentForm({
+  onSubmit,
+  reservations,
+  payments,
+  clients,
+  cars,
+  initialReservationId = 0,
+  initialType = "RENTAL_PAYMENT",
+  lockReservation = false,
+}: PaymentFormProps) {
   const {
     register,
     handleSubmit,
@@ -54,9 +67,9 @@ export function PaymentForm({ onSubmit, reservations, payments, clients, cars }:
     formState: { errors },
   } = useForm<PaymentFormValues>({
     defaultValues: {
-      reservationId: 0,
+      reservationId: initialReservationId,
       amount: 0,
-      type: "RENTAL_PAYMENT",
+      type: initialType,
       method: "CASH",
       paymentDate: new Date().toISOString().slice(0, 16),
       note: "",
@@ -78,6 +91,11 @@ export function PaymentForm({ onSubmit, reservations, payments, clients, cars }:
     [reservationId, reservations],
   );
 
+  useEffect(() => {
+    setValue("reservationId", initialReservationId, { shouldValidate: true });
+    setValue("type", initialType, { shouldValidate: true });
+  }, [initialReservationId, initialType, setValue]);
+
   const summary = useMemo<PaymentSummary | null>(() => {
     if (!selectedReservation) return null;
 
@@ -86,7 +104,9 @@ export function PaymentForm({ onSubmit, reservations, payments, clients, cars }:
     const rentalRemaining = Math.max(0, selectedReservation.totalPrice - rentalPaid);
     const depositCollected = sumPayments(reservationPayments, "DEPOSIT");
     const depositRefunded = sumPayments(reservationPayments, "DEPOSIT_REFUND");
-    const depositAvailable = Math.max(0, depositCollected - depositRefunded);
+    const depositRefundDecided = reservationPayments.some((payment) => payment.type === "DEPOSIT_REFUND");
+    const depositLimit = selectedReservation.depositAmount > 0 ? selectedReservation.depositAmount : depositCollected;
+    const depositAvailable = depositRefundDecided ? 0 : Math.max(0, Math.min(depositCollected, depositLimit) - depositRefunded);
 
     return {
       rentalTotal: selectedReservation.totalPrice,
@@ -95,6 +115,7 @@ export function PaymentForm({ onSubmit, reservations, payments, clients, cars }:
       depositExpected: selectedReservation.depositAmount,
       depositCollected,
       depositRefunded,
+      depositRefundDecided,
       depositAvailable,
     };
   }, [payments, selectedReservation]);
@@ -118,17 +139,38 @@ export function PaymentForm({ onSubmit, reservations, payments, clients, cars }:
     }
   }, [paymentType, setValue, summary]);
 
+  useEffect(() => {
+    if (!summary) return;
+
+    if (
+      (paymentType === "RENTAL_PAYMENT" && summary.rentalRemaining <= 0) ||
+      (paymentType === "DEPOSIT" && (summary.depositCollected > 0 || summary.depositExpected <= 0))
+    ) {
+      setValue("type", getNextAvailablePaymentType(summary), {
+        shouldValidate: true,
+      });
+    }
+
+    if (paymentType === "DEPOSIT_REFUND" && (summary.depositAvailable <= 0 || summary.depositRefundDecided)) {
+      setValue("type", getNextAvailablePaymentType(summary), { shouldValidate: true });
+    }
+  }, [paymentType, setValue, summary]);
+
   const amountLabel =
     paymentType === "DEPOSIT_REFUND"
       ? "Montant à rembourser"
       : paymentType === "PENALTY"
         ? "Montant de la pénalité"
-        : "Montant payé";
+        : paymentType === "DEPOSIT"
+          ? "Montant caution"
+          : "Montant payé";
   const amountMax =
     paymentType === "RENTAL_PAYMENT"
       ? summary?.rentalRemaining
       : paymentType === "DEPOSIT_REFUND"
         ? summary?.depositAvailable
+        : paymentType === "DEPOSIT"
+          ? summary?.depositExpected
         : undefined;
 
   function submitForm(values: PaymentFormValues) {
@@ -138,10 +180,11 @@ export function PaymentForm({ onSubmit, reservations, payments, clients, cars }:
       values.type === "PENALTY"
         ? [`Motif: ${penaltyReason.trim()}`, cleanedNote].filter(Boolean).join(" - ")
         : cleanedNote;
+    const amount = data.type === "DEPOSIT" && summary ? summary.depositExpected : Number(data.amount);
 
     return onSubmit({
       ...data,
-      amount: Number(data.amount),
+      amount,
       reservationId: Number(data.reservationId),
       paymentDate: data.paymentDate ? new Date(data.paymentDate).toISOString() : new Date().toISOString(),
       note: paymentNote || null,
@@ -152,20 +195,35 @@ export function PaymentForm({ onSubmit, reservations, payments, clients, cars }:
     <form className="grid gap-4 md:grid-cols-2" onSubmit={handleSubmit(submitForm)}>
       <div className="md:col-span-2">
         <Label>Réservation</Label>
-        <select
-          className={selectClassName}
-          {...register("reservationId", {
-            valueAsNumber: true,
-            validate: (value) => Number(value) > 0 || "Sélectionnez une réservation.",
-          })}
-        >
-          <option value={0}>Sélectionner</option>
-          {reservations.map((reservation) => (
-            <option key={reservation.id} value={reservation.id}>
-              {getReservationLabel(reservation, clientsById, carsById)}
-            </option>
-          ))}
-        </select>
+        {lockReservation && selectedReservation ? (
+          <>
+            <input
+              type="hidden"
+              {...register("reservationId", {
+                valueAsNumber: true,
+                validate: (value) => Number(value) > 0 || "Sélectionnez une réservation.",
+              })}
+            />
+            <div className="flex h-10 items-center rounded-md border border-input bg-muted/60 px-3 text-sm font-medium">
+              {getReservationLabel(selectedReservation, clientsById, carsById)}
+            </div>
+          </>
+        ) : (
+          <select
+            className={selectClassName}
+            {...register("reservationId", {
+              valueAsNumber: true,
+              validate: (value) => Number(value) > 0 || "Sélectionnez une réservation.",
+            })}
+          >
+            <option value={0}>Sélectionner</option>
+            {reservations.map((reservation) => (
+              <option key={reservation.id} value={reservation.id}>
+                {getReservationLabel(reservation, clientsById, carsById)}
+              </option>
+            ))}
+          </select>
+        )}
         {errors.reservationId && <p className="mt-1 text-xs text-destructive">{errors.reservationId.message}</p>}
       </div>
 
@@ -178,9 +236,15 @@ export function PaymentForm({ onSubmit, reservations, payments, clients, cars }:
       <div>
         <Label>Type de paiement</Label>
         <select className={selectClassName} {...register("type")}>
-          <option value="RENTAL_PAYMENT">Paiement location</option>
-          <option value="DEPOSIT">Caution</option>
-          <option value="DEPOSIT_REFUND">Remboursement caution</option>
+          <option disabled={Boolean(summary && summary.rentalRemaining <= 0)} value="RENTAL_PAYMENT">
+            Paiement location
+          </option>
+          <option disabled={Boolean(summary && (summary.depositCollected > 0 || summary.depositExpected <= 0))} value="DEPOSIT">
+            Caution
+          </option>
+          <option disabled={Boolean(summary && (summary.depositAvailable <= 0 || summary.depositRefundDecided))} value="DEPOSIT_REFUND">
+            Remboursement caution
+          </option>
           <option value="PENALTY">Pénalité</option>
         </select>
       </div>
@@ -189,7 +253,8 @@ export function PaymentForm({ onSubmit, reservations, payments, clients, cars }:
         <Label>{amountLabel}</Label>
         <Input
           max={amountMax}
-          min="0.001"
+          min={paymentType === "DEPOSIT_REFUND" ? "0" : "0.001"}
+          readOnly={paymentType === "DEPOSIT"}
           step="0.001"
           type="number"
           {...register("amount", {
@@ -197,6 +262,9 @@ export function PaymentForm({ onSubmit, reservations, payments, clients, cars }:
             validate: (value) => validateAmount(value, paymentType, summary),
           })}
         />
+        {paymentType === "DEPOSIT" && (
+          <p className="mt-1 text-xs text-muted-foreground">La caution est encaissée une seule fois au montant prévu.</p>
+        )}
         {errors.amount && <p className="mt-1 text-xs text-destructive">{errors.amount.message}</p>}
       </div>
 
@@ -271,16 +339,42 @@ function sumPayments(payments: Payment[], type: PaymentType) {
 function validateAmount(value: number, paymentType: PaymentType, summary: PaymentSummary | null) {
   const amount = Number(value);
 
-  if (!Number.isFinite(amount) || amount <= 0) {
-    return "Le montant doit être supérieur à 0.";
+  if (!Number.isFinite(amount) || (paymentType === "DEPOSIT_REFUND" ? amount < 0 : amount <= 0)) {
+    return paymentType === "DEPOSIT_REFUND"
+      ? "Le montant à rembourser doit être supérieur ou égal à 0."
+      : "Le montant doit être supérieur à 0.";
   }
 
   if (paymentType === "RENTAL_PAYMENT" && summary && amount > summary.rentalRemaining) {
+    if (summary.rentalRemaining <= 0) {
+      return "La location est déjà totalement payée.";
+    }
+
     return `Le paiement location ne peut pas dépasser ${formatMoney(summary.rentalRemaining)}.`;
   }
 
-  if (paymentType === "DEPOSIT_REFUND" && summary && amount > summary.depositAvailable) {
-    return `Le remboursement ne peut pas dépasser ${formatMoney(summary.depositAvailable)}.`;
+  if (paymentType === "DEPOSIT" && summary) {
+    if (summary.depositExpected <= 0) {
+      return "Aucune caution n'est prévue pour cette réservation.";
+    }
+
+    if (summary.depositCollected > 0) {
+      return "La caution est déjà encaissée pour cette réservation.";
+    }
+
+    if (!amountsAreEqual(amount, summary.depositExpected)) {
+      return `La caution doit être payée en une seule fois : ${formatMoney(summary.depositExpected)}.`;
+    }
+  }
+
+  if (paymentType === "DEPOSIT_REFUND" && summary) {
+    if (summary.depositRefundDecided) {
+      return "Le remboursement de caution est déjà enregistré pour cette réservation.";
+    }
+
+    if (amount > summary.depositAvailable) {
+      return `Le remboursement ne peut pas dépasser ${formatMoney(summary.depositAvailable)}.`;
+    }
   }
 
   return true;
@@ -292,14 +386,33 @@ function getTypeHint(paymentType: PaymentType, summary: PaymentSummary) {
   }
 
   if (paymentType === "DEPOSIT") {
+    if (summary.depositCollected > 0) {
+      return `Caution déjà encaissée : ${formatMoney(summary.depositCollected)}`;
+    }
+
     return `Caution demandée : ${formatMoney(summary.depositExpected)}`;
   }
 
   if (paymentType === "DEPOSIT_REFUND") {
+    if (summary.depositRefundDecided) {
+      return `Remboursement déjà enregistré : ${formatMoney(summary.depositRefunded)}`;
+    }
+
     return `Caution disponible à rembourser : ${formatMoney(summary.depositAvailable)}`;
   }
 
   return "Motif de pénalité obligatoire.";
+}
+
+function amountsAreEqual(first: number, second: number) {
+  return Math.abs(first - second) < 0.001;
+}
+
+function getNextAvailablePaymentType(summary: PaymentSummary): PaymentType {
+  if (summary.rentalRemaining > 0) return "RENTAL_PAYMENT";
+  if (summary.depositCollected <= 0 && summary.depositExpected > 0) return "DEPOSIT";
+  if (summary.depositAvailable > 0 && !summary.depositRefundDecided) return "DEPOSIT_REFUND";
+  return "PENALTY";
 }
 
 function getReservationLabel(

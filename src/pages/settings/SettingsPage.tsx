@@ -31,25 +31,24 @@ const settingsStorageKey = "rentaldesk:settings";
 const inputClassName = "h-10 w-full rounded-md border border-input bg-white px-3 text-sm";
 
 const defaultSettings: SettingsFormValues = {
-  agencyName: "Location Auto Tunis",
-  agencyPhone: "55 123 456",
-  agencyEmail: "contact@agence.com",
-  agencyAddress: "Rue de la Liberté, Tunis",
+  agencyName: "",
+  agencyPhone: "",
+  agencyEmail: "",
+  agencyAddress: "",
   adminPin: "",
   autoBackup: true,
   autoNumbering: true,
   autoYear: true,
-  contractFolder: "/contracts",
-  contractPrefix: "CNT",
+  contractFolder: "",
+  contractPrefix: "",
   currency: "DT",
-  defaultDeposit: 1000,
-  generalConditions:
-    "Le client s'engage à restituer le véhicule dans l'état initial. Les retards, dommages, frais de carburant et pénalités sont facturés selon les conditions de l'agence.",
+  defaultDeposit: 0,
+  generalConditions: "",
   logoImage: "",
-  nextContractNumber: "0010",
-  receiptFolder: "/receipts",
+  nextContractNumber: "",
+  receiptFolder: "",
   signatureImage: "",
-  vatRate: 19,
+  vatRate: 0,
 };
 
 export function SettingsPage() {

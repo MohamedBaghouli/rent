@@ -21,7 +21,7 @@ import { createPayment, getPayments } from "@/services/payment.service";
 import { getReservations } from "@/services/reservation.service";
 import type { Car } from "@/types/car";
 import type { Client } from "@/types/client";
-import type { CreatePaymentDto, Payment } from "@/types/payment";
+import type { CreatePaymentDto, Payment, PaymentType } from "@/types/payment";
 import type { Reservation } from "@/types/reservation";
 import { cn } from "@/lib/utils";
 import { formatCarName, formatRegistrationNumber } from "@/utils/car";
@@ -38,6 +38,7 @@ type ReservationSummary = {
   client?: Client;
   depositAmount: number;
   depositPaid: number;
+  depositRefundDecided: boolean;
   depositRefunded: number;
   depositStatus: DepositStatus;
   latestPayment?: Payment;
@@ -58,6 +59,7 @@ export function PaymentsPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const [open, setOpen] = useState(false);
+  const [actionSummary, setActionSummary] = useState<ReservationSummary | null>(null);
   const { showToast } = useToast();
 
   useEffect(() => {
@@ -85,6 +87,7 @@ export function PaymentsPage() {
         const reservationPayments = payments.filter((payment) => payment.reservationId === reservation.id);
         const depositPaid = sumPayments(reservationPayments, "DEPOSIT");
         const depositRefunded = sumPayments(reservationPayments, "DEPOSIT_REFUND");
+        const depositRefundDecided = reservationPayments.some((payment) => payment.type === "DEPOSIT_REFUND");
         const depositAmount = reservation.depositAmount || depositPaid;
         const paid = sumPayments(reservationPayments, "RENTAL_PAYMENT");
         const latestPayment = [...reservationPayments].sort(
@@ -99,8 +102,9 @@ export function PaymentsPage() {
           client: clientsById.get(reservation.clientId),
           depositAmount,
           depositPaid,
+          depositRefundDecided,
           depositRefunded,
-          depositStatus: getDepositStatus(depositAmount, depositPaid, depositRefunded),
+          depositStatus: getDepositStatus(depositAmount, depositPaid, depositRefunded, depositRefundDecided),
           latestPayment,
           paid,
           remaining,
@@ -157,6 +161,7 @@ export function PaymentsPage() {
       const payment = await createPayment(data);
       setPayments((current) => [payment, ...current]);
       setOpen(false);
+      setActionSummary(null);
       showToast({ title: "Paiement ajouté", type: "success" });
     } catch (caught) {
       showToast({ message: getErrorMessage(caught), title: "Erreur paiement", type: "error" });
@@ -223,7 +228,7 @@ export function PaymentsPage() {
       </section>
 
       <section className="overflow-hidden rounded-lg border border-border bg-white shadow-sm">
-        <PaymentsDataGrid rows={paginatedSummaries} />
+        <PaymentsDataGrid onPaymentAction={setActionSummary} rows={paginatedSummaries} />
         <Pagination
           currentPage={currentPage}
           itemsPerPage={itemsPerPage}
@@ -235,6 +240,26 @@ export function PaymentsPage() {
           totalItems={filteredSummaries.length}
         />
       </section>
+
+      <Dialog onOpenChange={(nextOpen) => !nextOpen && setActionSummary(null)} open={Boolean(actionSummary)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Action paiement</DialogTitle>
+          </DialogHeader>
+          {actionSummary && (
+            <PaymentForm
+              cars={cars}
+              clients={clients}
+              initialReservationId={actionSummary.reservation.id}
+              initialType={getNextPaymentType(actionSummary)}
+              lockReservation
+              onSubmit={handleCreate}
+              payments={payments}
+              reservations={reservations}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -330,10 +355,16 @@ function FilterField({ children, label }: { children: React.ReactNode; label: st
   );
 }
 
-function PaymentsDataGrid({ rows }: { rows: ReservationSummary[] }) {
+function PaymentsDataGrid({
+  onPaymentAction,
+  rows,
+}: {
+  onPaymentAction: (summary: ReservationSummary) => void;
+  rows: ReservationSummary[];
+}) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[980px] border-separate border-spacing-0 text-left text-sm" role="grid">
+      <table className="w-full min-w-[1080px] border-separate border-spacing-0 text-left text-sm" role="grid">
         <thead className="bg-slate-50 text-xs uppercase text-muted-foreground">
           <tr>
             <TableHead>Client</TableHead>
@@ -344,48 +375,71 @@ function PaymentsDataGrid({ rows }: { rows: ReservationSummary[] }) {
             <TableHead>Reste</TableHead>
             <TableHead>Caution</TableHead>
             <TableHead>Statut</TableHead>
+            <TableHead className="text-right">Action</TableHead>
             <TableHead className="text-right">Détail</TableHead>
           </tr>
         </thead>
         <tbody>
           {rows.length === 0 ? (
             <tr>
-              <td className="px-4 py-10 text-center text-muted-foreground" colSpan={9}>
+              <td className="px-4 py-10 text-center text-muted-foreground" colSpan={10}>
                 Aucun résumé de paiement trouvé
               </td>
             </tr>
           ) : (
-            rows.map((row) => (
-              <tr className="border-t border-border transition-colors hover:bg-muted/40" key={row.reservation.id}>
-                <TableCell>
-                  <p className="font-semibold">{row.client ? normalizeClientName(row.client.fullName) : "Client inconnu"}</p>
-                  <p className="text-xs text-muted-foreground">{getClientIdentifier(row.client)}</p>
-                </TableCell>
-                <TableCell>
-                  <p className="font-semibold">{row.car ? formatCarName(row.car.brand, row.car.model) : "Voiture inconnue"}</p>
-                  <p className="text-xs text-muted-foreground">{row.car ? `(${formatRegistrationNumber(row.car.registrationNumber)})` : "-"}</p>
-                </TableCell>
-                <TableCell>{formatShortPeriod(row.reservation.startDate, row.reservation.endDate)}</TableCell>
-                <TableCell className="font-semibold">{formatMoney(row.reservation.totalPrice)}</TableCell>
-                <TableCell className="font-semibold text-emerald-700">{formatMoney(row.paid)}</TableCell>
-                <TableCell className={cn("font-semibold", row.remaining > 0 ? "text-red-600" : "text-foreground")}>
-                  {formatMoney(row.remaining)}
-                </TableCell>
-                <TableCell>
-                  <DepositBadge summary={row} />
-                </TableCell>
-                <TableCell>
-                  <PaymentStatus label={row.status} />
-                </TableCell>
-                <TableCell className="text-right">
-                  <Button asChild size="icon" title="Voir détail" variant="ghost">
-                    <Link to={row.latestPayment ? `/payments/${row.latestPayment.id}` : "/payments/detail"}>
-                      <Eye className="h-4 w-4" />
-                    </Link>
-                  </Button>
-                </TableCell>
-              </tr>
-            ))
+            rows.map((row) => {
+              const actionLocked = isPaymentActionLocked(row);
+
+              return (
+                <tr className="border-t border-border transition-colors hover:bg-muted/40" key={row.reservation.id}>
+                  <TableCell>
+                    <p className="font-semibold">{row.client ? normalizeClientName(row.client.fullName) : "Client inconnu"}</p>
+                    <p className="text-xs text-muted-foreground">{getClientIdentifier(row.client)}</p>
+                  </TableCell>
+                  <TableCell>
+                    <p className="font-semibold">{row.car ? formatCarName(row.car.brand, row.car.model) : "Voiture inconnue"}</p>
+                    <p className="text-xs text-muted-foreground">{row.car ? `(${formatRegistrationNumber(row.car.registrationNumber)})` : "-"}</p>
+                  </TableCell>
+                  <TableCell>{formatShortPeriod(row.reservation.startDate, row.reservation.endDate)}</TableCell>
+                  <TableCell className="font-semibold">{formatMoney(row.reservation.totalPrice)}</TableCell>
+                  <TableCell className="font-semibold text-emerald-700">{formatMoney(row.paid)}</TableCell>
+                  <TableCell className={cn("font-semibold", row.remaining > 0 ? "text-red-600" : "text-foreground")}>
+                    {formatMoney(row.remaining)}
+                  </TableCell>
+                  <TableCell>
+                    <DepositBadge summary={row} />
+                  </TableCell>
+                  <TableCell>
+                    <PaymentStatus label={row.status} />
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      disabled={actionLocked}
+                      onClick={() => onPaymentAction(row)}
+                      size="icon"
+                      title={actionLocked ? "Paiement et remboursement terminés" : "Ajouter une action paiement"}
+                      type="button"
+                      variant="outline"
+                    >
+                      <Banknote className="h-4 w-4" />
+                    </Button>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {row.latestPayment ? (
+                      <Button asChild size="icon" title="Voir détail" variant="ghost">
+                        <Link to={`/payments/${row.latestPayment.id}`}>
+                          <Eye className="h-4 w-4" />
+                        </Link>
+                      </Button>
+                    ) : (
+                      <Button disabled size="icon" title="Aucun paiement renseigné" variant="ghost">
+                        <Eye className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </TableCell>
+                </tr>
+              );
+            })
           )}
         </tbody>
       </table>
@@ -462,11 +516,34 @@ function sumPayments(payments: Payment[], type: Payment["type"]) {
   return payments.filter((payment) => payment.type === type).reduce((sum, payment) => sum + payment.amount, 0);
 }
 
-function getDepositStatus(depositAmount: number, depositPaid: number, depositRefunded: number): DepositStatus {
+function getDepositStatus(depositAmount: number, depositPaid: number, depositRefunded: number, depositRefundDecided: boolean): DepositStatus {
   if (depositPaid <= 0) return "Non versée";
-  if (depositAmount > 0 && depositRefunded >= depositAmount) return "Remboursée";
-  if (depositRefunded > 0 && depositRefunded < depositAmount) return "Retenue";
+  const refundableDeposit = getRefundableDeposit(depositAmount, depositPaid);
+  if (refundableDeposit > 0 && depositRefunded >= refundableDeposit) return "Remboursée";
+  if (depositRefundDecided && depositRefunded < refundableDeposit) return "Retenue";
   return "Bloquée";
+}
+
+function isPaymentActionLocked(summary: ReservationSummary) {
+  const rentalClosed = summary.remaining <= 0;
+  const refundableDeposit = getRefundableDeposit(summary.depositAmount, summary.depositPaid);
+  const depositClosed = refundableDeposit > 0 ? summary.depositRefundDecided : summary.depositAmount <= 0;
+  return rentalClosed && depositClosed;
+}
+
+function getNextPaymentType(summary: ReservationSummary): PaymentType {
+  if (summary.remaining > 0) return "RENTAL_PAYMENT";
+
+  const depositAvailable = Math.max(0, getRefundableDeposit(summary.depositAmount, summary.depositPaid) - summary.depositRefunded);
+  if (depositAvailable > 0 && !summary.depositRefundDecided) return "DEPOSIT_REFUND";
+  if (summary.depositPaid <= 0 && summary.depositAmount > 0) return "DEPOSIT";
+
+  return "PENALTY";
+}
+
+function getRefundableDeposit(depositAmount: number, depositPaid: number) {
+  if (depositPaid <= 0) return 0;
+  return depositAmount > 0 ? Math.min(depositPaid, depositAmount) : depositPaid;
 }
 
 function getReservationLabel(summary: ReservationSummary) {

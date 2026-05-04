@@ -1,33 +1,70 @@
 import { NavLink } from "react-router-dom";
-import { appName, navigationItems } from "@/lib/constants";
+import { CarFront } from "lucide-react";
+import { navigationItems } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
-export function Sidebar() {
+const settingsStorageKey = "rentaldesk:settings";
+
+export function Sidebar({ collapsed }: { collapsed: boolean }) {
+  const settings = readSettings();
+
   return (
-    <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 shrink-0 border-r border-border bg-white md:block">
-      <div className="flex h-16 items-center border-b border-border px-6">
-        <span className="text-lg font-semibold text-primary">{appName}</span>
+    <aside
+      className={cn(
+        "fixed inset-y-0 left-0 z-30 hidden shrink-0 border-r border-border bg-white transition-smooth dark:bg-slate-950 md:block",
+        collapsed ? "w-16" : "w-64",
+      )}
+    >
+      <div className={cn("flex h-16 items-center border-b border-border", collapsed ? "justify-center px-0" : "gap-3 px-4")}>
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white shadow-sm">
+          <CarFront className="h-4 w-4" />
+        </span>
+        {!collapsed && (
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold leading-5 text-foreground">{settings.agencyName || "Location Auto bizerte"}</p>
+            <p className="truncate text-sm leading-5 text-muted-foreground">{settings.userName || "Ahmed Mahjoub"}</p>
+          </div>
+        )}
       </div>
       <nav className="space-y-1 p-3">
         {navigationItems.map((item) => (
           <NavLink
             className={({ isActive }) =>
               cn(
-                "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-smooth",
+                "flex h-10 items-center rounded-md text-sm font-medium transition-smooth",
+                collapsed ? "justify-center px-0" : "gap-3 px-3",
                 isActive
-                  ? "animate-fade-in bg-primary text-primary-foreground shadow-md"
+                  ? "animate-fade-in bg-primary text-primary-foreground shadow-md dark:bg-blue-600"
                   : "text-muted-foreground hover:bg-muted hover:text-foreground active:scale-95",
               )
             }
             end={item.path === "/"}
             key={item.path}
+            title={collapsed ? item.label : undefined}
             to={item.path}
           >
             <item.icon className="h-4 w-4" />
-            {item.label}
+            {!collapsed && <span>{item.label}</span>}
           </NavLink>
         ))}
       </nav>
     </aside>
   );
+}
+
+function readSettings() {
+  if (typeof window === "undefined") return { agencyName: "", userName: "" };
+
+  try {
+    const stored = window.localStorage.getItem(settingsStorageKey);
+    if (!stored) return { agencyName: "", userName: "" };
+    const settings = JSON.parse(stored) as { agencyName?: unknown; userName?: unknown };
+
+    return {
+      agencyName: typeof settings.agencyName === "string" ? settings.agencyName.trim() : "",
+      userName: typeof settings.userName === "string" ? settings.userName.trim() : "",
+    };
+  } catch {
+    return { agencyName: "", userName: "" };
+  }
 }

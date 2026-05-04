@@ -19,7 +19,6 @@ import {
   WalletCards,
 } from "lucide-react";
 import { Pagination } from "@/components/Pagination";
-import paymentDetailMock from "@/pages/payments/payment-detail.mock.json";
 import { getCars } from "@/services/car.service";
 import { getClients } from "@/services/client.service";
 import { getPayments } from "@/services/payment.service";
@@ -35,25 +34,25 @@ import { formatDateTime } from "@/utils/date";
 import { formatMoney } from "@/utils/money";
 
 type PaymentStatus = "Payé" | "Partiel" | "Non payé";
-type DepositStatus = "Bloquée" | "Remboursée" | "Retenue";
+type DepositStatus = "Non versée" | "Bloquée" | "Remboursée" | "Retenue";
 
 type PaymentDetailData = {
-  agency: {
-    connectedUser: string;
-    name: string;
-  };
   client: {
     cin: string;
     name: string;
   };
   deposit: {
     amount: number;
-    conditions: string;
-    method: string;
-    paidAt: string;
+    conditions: string | null;
+    method: string | null;
+    paidAt: string | null;
+    refundedAmount: number;
+    refundedAt: string | null;
+    refundMethod: string | null;
+    retainedAmount: number;
     refundConditions: string[];
     status: DepositStatus;
-    warning: string;
+    warning: string | null;
   };
   payment: {
     extraFees: number;
@@ -63,7 +62,7 @@ type PaymentDetailData = {
     totalPaid: number;
   };
   reservation: {
-    carImageUrl: string;
+    carImageUrl: string | null;
     carName: string;
     days: number;
     endDate: string;
@@ -83,8 +82,6 @@ type Transaction = {
   method: string;
   type: "Location" | "Caution" | "Remboursement" | "Pénalité";
 };
-
-export const mockPaymentDetail = paymentDetailMock as PaymentDetailData;
 
 export function PaymentDetailsPage() {
   const { paymentId } = useParams();
@@ -123,7 +120,7 @@ export function PaymentDetailsPage() {
   }, [paymentId]);
 
   const data = useMemo(() => {
-    if (!paymentId) return mockPaymentDetail;
+    if (!paymentId) return null;
     return buildPaymentDetailData(Number(paymentId), payments, reservations, clients, cars);
   }, [cars, clients, paymentId, payments, reservations]);
 
@@ -133,6 +130,10 @@ export function PaymentDetailsPage() {
 
   if (error) {
     return <DesktopStateCard title="Paiement indisponible" description={error} />;
+  }
+
+  if (!paymentId) {
+    return <DesktopStateCard title="Paiement indisponible" description="Aucun paiement n'a été sélectionné." />;
   }
 
   if (!data) {
@@ -194,23 +195,32 @@ function buildPaymentDetailData(
   const totalPaid = sumByType(reservationPayments, "RENTAL_PAYMENT");
   const remaining = Math.max(0, totalDue - totalPaid);
   const firstDeposit = reservationPayments.find((payment) => payment.type === "DEPOSIT");
+  const refundPayments = reservationPayments.filter((payment) => payment.type === "DEPOSIT_REFUND");
+  const latestRefund = refundPayments[0];
+  const depositPaid = sumByType(reservationPayments, "DEPOSIT");
   const refundedDeposit = sumByType(reservationPayments, "DEPOSIT_REFUND");
+  const depositRefundDecided = reservationPayments.some((payment) => payment.type === "DEPOSIT_REFUND");
   const depositAmount = reservation.depositAmount || firstDeposit?.amount || 0;
+  const refundableDeposit = getRefundableDeposit(depositAmount, depositPaid);
+  const retainedDeposit = depositRefundDecided ? Math.max(0, refundableDeposit - refundedDeposit) : 0;
 
   return {
-    agency: mockPaymentDetail.agency,
     client: {
       cin: client?.cin || client?.passportNumber || "-",
-      name: client ? normalizeClientName(client.fullName) : "Client inconnu",
+      name: client ? normalizeClientName(client.fullName) : "Client non renseigné",
     },
     deposit: {
       amount: depositAmount,
-      conditions: "Remboursable après vérification du véhicule",
-      method: formatPaymentMethod(firstDeposit?.method || selectedPayment.method),
-      paidAt: firstDeposit?.paymentDate || selectedPayment.paymentDate,
-      refundConditions: mockPaymentDetail.deposit.refundConditions,
-      status: getDepositStatus(depositAmount, refundedDeposit),
-      warning: mockPaymentDetail.deposit.warning,
+      conditions: null,
+      method: firstDeposit ? formatPaymentMethod(firstDeposit.method) : null,
+      paidAt: firstDeposit?.paymentDate ?? null,
+      refundedAmount: refundedDeposit,
+      refundedAt: latestRefund?.paymentDate ?? null,
+      refundMethod: latestRefund ? formatPaymentMethod(latestRefund.method) : null,
+      retainedAmount: retainedDeposit,
+      refundConditions: [],
+      status: getDepositStatus(depositAmount, depositPaid, refundedDeposit, depositRefundDecided),
+      warning: null,
     },
     payment: {
       extraFees,
@@ -220,8 +230,8 @@ function buildPaymentDetailData(
       totalPaid,
     },
     reservation: {
-      carImageUrl: car?.imageUrl || mockPaymentDetail.reservation.carImageUrl,
-      carName: car ? formatCarName(car.brand, car.model) : "Voiture inconnue",
+      carImageUrl: car?.imageUrl ?? null,
+      carName: car ? formatCarName(car.brand, car.model) : "Voiture non renseignée",
       days: getReservationDays(reservation.startDate, reservation.endDate),
       endDate: reservation.endDate,
       paymentMethod: formatPaymentMethod(selectedPayment.method),
@@ -249,10 +259,17 @@ function getPaymentStatus(totalPaid: number, remaining: number): PaymentStatus {
   return remaining > 0 ? "Partiel" : "Payé";
 }
 
-function getDepositStatus(depositAmount: number, refundedDeposit: number): DepositStatus {
-  if (depositAmount > 0 && refundedDeposit >= depositAmount) return "Remboursée";
-  if (refundedDeposit > 0 && refundedDeposit < depositAmount) return "Retenue";
+function getDepositStatus(depositAmount: number, depositPaid: number, refundedDeposit: number, depositRefundDecided: boolean): DepositStatus {
+  if (depositPaid <= 0) return "Non versée";
+  const refundableDeposit = getRefundableDeposit(depositAmount, depositPaid);
+  if (refundableDeposit > 0 && refundedDeposit >= refundableDeposit) return "Remboursée";
+  if (depositRefundDecided && refundedDeposit < refundableDeposit) return "Retenue";
   return "Bloquée";
+}
+
+function getRefundableDeposit(depositAmount: number, depositPaid: number) {
+  if (depositPaid <= 0) return 0;
+  return depositAmount > 0 ? Math.min(depositPaid, depositAmount) : depositPaid;
 }
 
 function getReservationDays(startDate: string, endDate: string) {
@@ -310,11 +327,17 @@ export function PaymentSummaryCard({ data }: { data: PaymentDetailData }) {
     <article className="rounded-lg border border-border bg-white p-4 shadow-sm transition-smooth hover:-translate-y-0.5 hover:shadow-md sm:p-5">
       <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
         <div className="flex min-w-0 flex-col gap-4 md:flex-row">
-          <img
-            alt={reservation.carName}
-            className="h-36 w-full rounded-lg object-cover md:h-32 md:w-44"
-            src={reservation.carImageUrl}
-          />
+          {reservation.carImageUrl ? (
+            <img
+              alt={reservation.carName}
+              className="h-36 w-full rounded-lg object-cover md:h-32 md:w-44"
+              src={reservation.carImageUrl}
+            />
+          ) : (
+            <div className="flex h-36 w-full items-center justify-center rounded-lg bg-muted text-muted-foreground md:h-32 md:w-44">
+              <CarFront className="h-10 w-10" />
+            </div>
+          )}
 
           <div className="grid min-w-0 flex-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             <div className="min-w-0">
@@ -422,30 +445,38 @@ export function DepositDetails({ deposit }: { deposit: PaymentDetailData["deposi
 
       <dl className="mt-5 space-y-4">
         <DetailRow icon={ShieldCheck} label="Statut" value={deposit.status} />
-        <DetailRow icon={CalendarDays} label="Date de versement" value={formatDateTime(deposit.paidAt)} />
-        <DetailRow icon={Banknote} label="Méthode" value={deposit.method} />
-        <DetailRow icon={RotateCcw} label="Conditions" value={deposit.conditions} />
+        <DetailRow icon={CalendarDays} label="Date de versement" value={deposit.paidAt ? formatDateTime(deposit.paidAt) : "-"} />
+        <DetailRow icon={Banknote} label="Méthode" value={deposit.method ?? "-"} />
+        <DetailRow icon={RotateCcw} label="Montant remboursé" tone={deposit.refundedAt ? "paid" : undefined} value={formatMoney(deposit.refundedAmount)} />
+        <DetailRow icon={CalendarDays} label="Date de remboursement" value={deposit.refundedAt ? formatDateTime(deposit.refundedAt) : "-"} />
+        <DetailRow icon={Banknote} label="Méthode remboursement" value={deposit.refundMethod ?? "-"} />
+        <DetailRow icon={AlertTriangle} label="Montant retenu" tone={deposit.retainedAmount > 0 ? "danger" : undefined} value={formatMoney(deposit.retainedAmount)} />
+        <DetailRow icon={RotateCcw} label="Conditions" value={deposit.conditions ?? "-"} />
       </dl>
 
-      <div className="mt-5 rounded-lg border border-amber-200 bg-white/80 p-4">
-        <h3 className="text-sm font-semibold text-amber-950">Conditions de remboursement</h3>
-        <ul className="mt-3 grid gap-2 sm:grid-cols-2">
-          {deposit.refundConditions.map((condition) => (
-            <li className="flex items-center gap-2 text-sm text-amber-900" key={condition}>
-              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
-              {condition}
-            </li>
-          ))}
-        </ul>
-      </div>
-
-      <div className="mt-4 flex gap-3 rounded-lg border border-amber-300 bg-amber-100 px-4 py-3 text-sm text-amber-950">
-        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" />
-        <div>
-          <h3 className="font-semibold">Important</h3>
-          <p className="mt-0.5">{deposit.warning}</p>
+      {deposit.refundConditions.length > 0 && (
+        <div className="mt-5 rounded-lg border border-amber-200 bg-white/80 p-4">
+          <h3 className="text-sm font-semibold text-amber-950">Conditions de remboursement</h3>
+          <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+            {deposit.refundConditions.map((condition) => (
+              <li className="flex items-center gap-2 text-sm text-amber-900" key={condition}>
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                {condition}
+              </li>
+            ))}
+          </ul>
         </div>
-      </div>
+      )}
+
+      {deposit.warning && (
+        <div className="mt-4 flex gap-3 rounded-lg border border-amber-300 bg-amber-100 px-4 py-3 text-sm text-amber-950">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" />
+          <div>
+            <h3 className="font-semibold">Important</h3>
+            <p className="mt-0.5">{deposit.warning}</p>
+          </div>
+        </div>
+      )}
     </article>
   );
 }
@@ -610,7 +641,9 @@ function DepositStatusBadge({ status }: { status: DepositStatus }) {
       ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
       : status === "Retenue"
         ? "bg-red-50 text-red-700 ring-red-200"
-        : "bg-amber-100 text-amber-800 ring-amber-300";
+        : status === "Bloquée"
+          ? "bg-amber-100 text-amber-800 ring-amber-300"
+          : "bg-slate-50 text-slate-700 ring-slate-200";
 
   return <span className={cn("shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ring-1", className)}>{status}</span>;
 }
